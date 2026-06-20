@@ -162,6 +162,50 @@ export async function setStudentStatus(
   revalidatePath("/admin");
 }
 
+/** Update a student's basic details (name, whatsapp, gender). */
+export async function updateStudent(
+  studentId: number,
+  formData: FormData
+): Promise<{ error?: string }> {
+  assertAdmin();
+  const name = String(formData.get("name") ?? "").trim();
+  const whatsapp = String(formData.get("whatsapp") ?? "").trim();
+  const gender = String(formData.get("gender") ?? "").trim();
+  if (!name) return { error: "Name is required." };
+
+  await sql`
+    UPDATE students
+    SET name = ${name}, whatsapp = ${whatsapp || null}, gender = ${gender || null}
+    WHERE id = ${studentId}
+  `;
+  revalidatePath("/admin");
+  return {};
+}
+
+/**
+ * Permanently delete a student AND all their records (attendance, ledger,
+ * assignment statuses). Destructive — the UI confirms first. Children are
+ * removed before the student to satisfy foreign keys.
+ */
+export async function deleteStudent(studentId: number): Promise<{ error?: string }> {
+  assertAdmin();
+  try {
+    await sql`DELETE FROM assignment_status WHERE student_id = ${studentId}`;
+    await sql`DELETE FROM attendance WHERE student_id = ${studentId}`;
+    await sql`DELETE FROM ledger WHERE student_id = ${studentId}`;
+    await sql`DELETE FROM students WHERE id = ${studentId}`;
+  } catch (e) {
+    return {
+      error:
+        e instanceof Error
+          ? `Could not delete: ${e.message}`
+          : "Could not delete student.",
+    };
+  }
+  revalidatePath("/admin");
+  return {};
+}
+
 // ---------------------------------------------------------------------------
 // Sessions
 // ---------------------------------------------------------------------------

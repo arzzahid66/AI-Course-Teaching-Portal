@@ -7,6 +7,8 @@ import {
   bulkAddStudents,
   setStudentStatus,
   setStudentCredentials,
+  updateStudent,
+  deleteStudent,
   createSession,
   closeSession,
   recordPayment,
@@ -117,7 +119,7 @@ function StudentsTab({ students }: { students: StudentRow[] }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
-  const [detailId, setDetailId] = useState<number | null>(null);
+  const [selected, setSelected] = useState<StudentRow | null>(null);
   const addRef = useRef<HTMLFormElement>(null);
   const bulkRef = useRef<HTMLFormElement>(null);
 
@@ -253,10 +255,10 @@ function StudentsTab({ students }: { students: StudentRow[] }) {
                   </td>
                   <td className="py-2 px-2 text-right">
                     <button
-                      onClick={() => setDetailId(s.id)}
+                      onClick={() => setSelected(s)}
                       className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1"
                     >
-                      View
+                      View / Edit
                     </button>
                   </td>
                 </tr>
@@ -273,24 +275,33 @@ function StudentsTab({ students }: { students: StudentRow[] }) {
         </div>
       </Card>
 
-      {detailId !== null && (
-        <StudentDetailModal studentId={detailId} onClose={() => setDetailId(null)} />
+      {selected && (
+        <StudentDetailModal student={selected} onClose={() => setSelected(null)} />
       )}
     </>
   );
 }
 
 function StudentDetailModal({
-  studentId,
+  student,
   onClose,
 }: {
-  studentId: number;
+  student: StudentRow;
   onClose: () => void;
 }) {
   const router = useRouter();
+  const studentId = student.id;
   const [data, setData] = useState<StudentDetail | null>(null);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
+  const [editMsg, setEditMsg] = useState<string | null>(null);
+  // Locally track the editable fields so the form + title reflect saved edits
+  // immediately (the `student` prop stays stale until the page re-renders).
+  const [details, setDetails] = useState({
+    name: student.name,
+    whatsapp: student.whatsapp ?? "",
+    gender: student.gender ?? "",
+  });
   const credRef = useRef<HTMLFormElement>(null);
 
   async function load() {
@@ -317,6 +328,54 @@ function StudentDetailModal({
     });
   }
 
+  function onEdit(formData: FormData) {
+    setEditMsg(null);
+    // Capture the submitted values before the async call so we can reflect
+    // them in the UI right after a successful save.
+    const next = {
+      name: String(formData.get("name") ?? "").trim(),
+      whatsapp: String(formData.get("whatsapp") ?? "").trim(),
+      gender: String(formData.get("gender") ?? "").trim(),
+    };
+    start(async () => {
+      try {
+        const res = await updateStudent(studentId, formData);
+        if (res.error) {
+          setEditMsg(res.error);
+          return;
+        }
+        setDetails(next);
+        setEditMsg("Saved.");
+        router.refresh();
+      } catch (e) {
+        setEditMsg(e instanceof Error ? e.message : "Could not save details.");
+      }
+    });
+  }
+
+  function onDelete() {
+    if (
+      !confirm(
+        `Delete ${details.name} permanently? This also removes their attendance, fees and assignment records. This cannot be undone.`
+      )
+    )
+      return;
+    setEditMsg(null);
+    start(async () => {
+      try {
+        const res = await deleteStudent(studentId);
+        if (res.error) {
+          setEditMsg(res.error);
+          return;
+        }
+        router.refresh();
+        onClose();
+      } catch (e) {
+        setEditMsg(e instanceof Error ? e.message : "Could not delete student.");
+      }
+    });
+  }
+
   return (
     <div
       className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4 z-50"
@@ -327,10 +386,51 @@ function StudentDetailModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-bold">{data?.name ?? "Loading…"}</h2>
+          <h2 className="text-lg font-bold">{details.name}</h2>
           <button onClick={onClose} className="text-slate-400 text-2xl leading-none">
             ×
           </button>
+        </div>
+
+        {/* Edit + Delete depend only on the student row, so keep them
+            available even while (or if) the detail panel fails to load. */}
+        <div className="rounded-xl bg-slate-50 p-3 mb-4">
+          <h3 className="font-semibold text-sm mb-2">Edit details</h3>
+          <form action={onEdit} className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input
+              key={`name-${details.name}`}
+              name="name"
+              defaultValue={details.name}
+              placeholder="Name"
+              className={fieldClass()}
+            />
+            <input
+              key={`wa-${details.whatsapp}`}
+              name="whatsapp"
+              defaultValue={details.whatsapp}
+              placeholder="WhatsApp"
+              className={fieldClass()}
+            />
+            <select
+              key={`g-${details.gender}`}
+              name="gender"
+              defaultValue={details.gender}
+              className={fieldClass()}
+            >
+              <option value="">Gender</option>
+              <option value="female">Female</option>
+              <option value="male">Male</option>
+              <option value="other">Other</option>
+            </select>
+            <button
+              type="submit"
+              disabled={pending}
+              className="rounded-xl bg-slate-800 px-4 py-2 text-white font-semibold disabled:opacity-50"
+            >
+              Save details
+            </button>
+          </form>
+          {editMsg && <p className="text-sm mt-2 text-slate-600">{editMsg}</p>}
         </div>
 
         {!data ? (
@@ -423,6 +523,19 @@ function StudentDetailModal({
             </ul>
           </>
         )}
+
+        <div className="border-t mt-5 pt-4">
+          <button
+            onClick={onDelete}
+            disabled={pending}
+            className="w-full rounded-xl border border-rose-300 text-rose-700 px-4 py-2.5 font-semibold disabled:opacity-50"
+          >
+            Delete student permanently
+          </button>
+          <p className="text-slate-400 text-xs mt-2 text-center">
+            Removes the student and all their attendance, fees and assignment records.
+          </p>
+        </div>
       </div>
     </div>
   );
