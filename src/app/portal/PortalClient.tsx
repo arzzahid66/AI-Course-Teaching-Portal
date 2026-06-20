@@ -1,0 +1,370 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { checkIn, type PortalData } from "@/actions/student";
+import { studentLogout } from "@/actions/studentAuth";
+
+type Tab = "class" | "topics" | "assignments" | "record";
+
+function fmt(d: string | null): string {
+  if (!d) return "";
+  const date = new Date(d);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString();
+}
+function fmtDate(d: string | null): string {
+  if (!d) return "";
+  const date = new Date(d);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString();
+}
+
+export default function PortalClient({ data }: { data: PortalData }) {
+  const [tab, setTab] = useState<Tab>("class");
+
+  return (
+    <main className="min-h-screen max-w-md mx-auto p-4 pb-24">
+      <header className="flex items-center justify-between mb-4">
+        <div>
+          <p className="text-slate-500 text-sm">Welcome</p>
+          <h1 className="text-xl font-bold">{data.name}</h1>
+        </div>
+        <button
+          onClick={() => studentLogout()}
+          className="text-sm text-slate-500 underline"
+        >
+          Log out
+        </button>
+      </header>
+
+      {tab === "class" && <ClassTab data={data} />}
+      {tab === "topics" && <TopicsTab data={data} />}
+      {tab === "assignments" && <AssignmentsTab data={data} />}
+      {tab === "record" && <RecordTab data={data} />}
+
+      {/* Bottom tab bar (mobile-first) */}
+      <nav className="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-white border-t border-slate-200 grid grid-cols-4">
+        {([
+          ["class", "Class", "🏫"],
+          ["topics", "Topics", "📚"],
+          ["assignments", "Tasks", "📝"],
+          ["record", "Record", "📊"],
+        ] as [Tab, string, string][]).map(([t, label, icon]) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`py-2.5 flex flex-col items-center gap-0.5 text-xs font-medium ${
+              tab === t ? "text-brand-700" : "text-slate-400"
+            }`}
+          >
+            <span className="text-lg leading-none">{icon}</span>
+            {label}
+          </button>
+        ))}
+      </nav>
+    </main>
+  );
+}
+
+function Card({ children }: { children: React.ReactNode }) {
+  return (
+    <section className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-100 p-5 mb-4">
+      {children}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Class / check-in
+// ---------------------------------------------------------------------------
+function ClassTab({ data }: { data: PortalData }) {
+  const router = useRouter();
+  const [code, setCode] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [meetLink, setMeetLink] = useState<string | null>(null);
+
+  const c = data.checkin;
+
+  const emailNote = data.email ? (
+    <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-4 text-left">
+      ⚠️ Join Google Meet signed in as{" "}
+      <span className="font-semibold break-all">{data.email}</span>. Joining with a
+      different email will not be let in.
+    </p>
+  ) : (
+    <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 mb-4 text-left">
+      Ask your tutor which email to use for Google Meet — joining with the wrong email
+      won&apos;t be let in.
+    </p>
+  );
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    const res = await checkIn(code);
+    setLoading(false);
+    if (res.ok) {
+      setMeetLink(res.meetLink);
+      router.refresh();
+    } else {
+      setError(res.error);
+    }
+  }
+
+  if (c.kind === "blocked") {
+    return (
+      <Card>
+        <div className="text-center">
+          <div className="text-5xl mb-3">⛔️</div>
+          <p className="text-lg font-semibold text-rose-600 mb-1">
+            You owe Rs {c.balance}
+          </p>
+          <p className="text-slate-600">
+            Please pay your tutor to rejoin. Once your payment is recorded,
+            you&apos;ll be able to check in again.
+          </p>
+        </div>
+      </Card>
+    );
+  }
+
+  if (c.kind === "no-session") {
+    return (
+      <Card>
+        <div className="text-center">
+          <div className="text-5xl mb-3">😴</div>
+          <h2 className="text-lg font-bold mb-1">No class live right now</h2>
+          <p className="text-slate-600">Come back at class time and refresh.</p>
+        </div>
+      </Card>
+    );
+  }
+
+  const link = meetLink ?? (c.kind === "present" ? c.meetLink : null);
+  if (link) {
+    return (
+      <Card>
+        <div className="text-center">
+          <div className="text-5xl mb-3">✅</div>
+          <h2 className="text-lg font-bold mb-1">You&apos;re marked present</h2>
+          <p className="text-slate-600 mb-4">
+            {c.kind === "present" ? c.sessionTitle : "See you in class!"}
+          </p>
+          {emailNote}
+          <a
+            href={link}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block w-full rounded-2xl bg-green-600 px-5 py-4 text-white text-lg font-bold shadow-sm active:scale-[0.98] transition"
+          >
+            Join the class →
+          </a>
+        </div>
+      </Card>
+    );
+  }
+
+  // can-checkin
+  return (
+    <Card>
+      <div className="text-center mb-4">
+        <div className="text-4xl mb-2">👋</div>
+        <h2 className="text-lg font-bold">{c.sessionTitle}</h2>
+        <p className="text-slate-500 text-sm">Enter the code your tutor said</p>
+      </div>
+      {emailNote}
+      <form onSubmit={submit} className="space-y-4">
+        <input
+          type="text"
+          autoComplete="off"
+          autoCapitalize="none"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          placeholder="Today's code"
+          className="w-full rounded-2xl border border-slate-300 px-4 py-4 text-lg text-center tracking-wide focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none"
+        />
+        {error && (
+          <p className="text-center text-rose-600 text-sm font-medium">{error}</p>
+        )}
+        <button
+          type="submit"
+          disabled={loading || code.trim().length === 0}
+          className="w-full rounded-2xl bg-brand-600 px-5 py-4 text-white text-lg font-bold shadow-sm active:scale-[0.98] transition disabled:opacity-50"
+        >
+          {loading ? "Checking…" : "Mark me present"}
+        </button>
+      </form>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Topics
+// ---------------------------------------------------------------------------
+function TopicsTab({ data }: { data: PortalData }) {
+  const { upcoming, past } = data.topics;
+  return (
+    <>
+      <Card>
+        <h2 className="font-bold mb-3">📌 Coming up</h2>
+        {upcoming.length === 0 ? (
+          <p className="text-slate-400 text-sm">Nothing scheduled yet.</p>
+        ) : (
+          <ul className="space-y-3">
+            {upcoming.map((t) => (
+              <li key={t.id} className="border-l-4 border-brand-300 pl-3">
+                <p className="font-semibold">{t.title}</p>
+                {t.description && (
+                  <p className="text-slate-600 text-sm">{t.description}</p>
+                )}
+                {t.planned_at && (
+                  <p className="text-slate-400 text-xs mt-0.5">{fmtDate(t.planned_at)}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+      <Card>
+        <h2 className="font-bold mb-3">✅ Already covered</h2>
+        {past.length === 0 ? (
+          <p className="text-slate-400 text-sm">Nothing yet.</p>
+        ) : (
+          <ul className="space-y-3">
+            {past.map((t) => (
+              <li key={t.id} className="border-l-4 border-emerald-300 pl-3">
+                <p className="font-semibold">{t.title}</p>
+                {t.description && (
+                  <p className="text-slate-600 text-sm">{t.description}</p>
+                )}
+                {t.planned_at && (
+                  <p className="text-slate-400 text-xs mt-0.5">{fmtDate(t.planned_at)}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Assignments
+// ---------------------------------------------------------------------------
+function AssignmentsTab({ data }: { data: PortalData }) {
+  return (
+    <Card>
+      <h2 className="font-bold mb-1">📝 Assignments</h2>
+      <p className="text-slate-500 text-sm mb-3">
+        Send your work to your tutor on WhatsApp. They&apos;ll mark it done here.
+      </p>
+      {data.assignments.length === 0 ? (
+        <p className="text-slate-400 text-sm">No assignments yet.</p>
+      ) : (
+        <ul className="space-y-3">
+          {data.assignments.map((a) => (
+            <li
+              key={a.id}
+              className="rounded-xl border border-slate-200 p-3 flex items-start justify-between gap-3"
+            >
+              <div>
+                <p className="font-semibold">{a.title}</p>
+                {a.description && (
+                  <p className="text-slate-600 text-sm">{a.description}</p>
+                )}
+                {a.due_at && (
+                  <p className="text-slate-400 text-xs mt-0.5">Due {fmtDate(a.due_at)}</p>
+                )}
+              </div>
+              <span
+                className={`shrink-0 text-xs rounded-full px-2 py-0.5 font-medium ${
+                  a.status === "done"
+                    ? "bg-emerald-100 text-emerald-700"
+                    : "bg-amber-100 text-amber-700"
+                }`}
+              >
+                {a.status === "done" ? "done ✅" : "pending"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// My record (attendance + dues)
+// ---------------------------------------------------------------------------
+function RecordTab({ data }: { data: PortalData }) {
+  return (
+    <>
+      <Card>
+        <div className="flex items-center justify-between">
+          <h2 className="font-bold">Balance</h2>
+          <span
+            className={
+              data.balance > 0 ? "text-rose-600 font-bold" : "text-emerald-600 font-bold"
+            }
+          >
+            {data.balance > 0 ? `Rs ${data.balance} due` : "All clear"}
+          </span>
+        </div>
+      </Card>
+
+      <Card>
+        <h2 className="font-bold mb-3">Attendance history</h2>
+        {data.attendance.length === 0 ? (
+          <p className="text-slate-400 text-sm">No classes yet.</p>
+        ) : (
+          <ul className="divide-y text-sm">
+            {data.attendance.map((a, i) => (
+              <li key={i} className="flex items-center justify-between py-2">
+                <div>
+                  <p className="font-medium">{a.title}</p>
+                  <p className="text-slate-400 text-xs">{fmt(a.scheduled_at)}</p>
+                </div>
+                <span
+                  className={
+                    a.status === "present"
+                      ? "text-emerald-600 font-medium"
+                      : "text-rose-600 font-medium"
+                  }
+                >
+                  {a.status}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      <Card>
+        <h2 className="font-bold mb-3">Absent fee</h2>
+        {data.ledger.length === 0 ? (
+          <p className="text-slate-400 text-sm">No charges or payments yet.</p>
+        ) : (
+          <ul className="divide-y text-sm">
+            {data.ledger.map((l, i) => (
+              <li key={i} className="flex items-center justify-between py-2">
+                <div>
+                  <p className="font-medium capitalize">{l.reason || l.type}</p>
+                  <p className="text-slate-400 text-xs">{fmt(l.created_at)}</p>
+                </div>
+                <span
+                  className={
+                    l.type === "penalty" ? "text-rose-600" : "text-emerald-600"
+                  }
+                >
+                  {l.type === "penalty" ? "+" : "−"}Rs {l.amount}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </>
+  );
+}
