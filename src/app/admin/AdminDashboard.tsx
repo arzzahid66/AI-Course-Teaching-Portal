@@ -11,6 +11,8 @@ import {
   deleteStudent,
   createSession,
   closeSession,
+  scheduleSession,
+  openSession as startSession,
   updateSession,
   deleteSession,
   recordPayment,
@@ -573,6 +575,36 @@ function SessionsTab({
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<SessionRow | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const scheduleRef = useRef<HTMLFormElement>(null);
+
+  function onSchedule(formData: FormData) {
+    setError(null);
+    const local = String(formData.get("scheduled_at") ?? "");
+    if (local) {
+      const d = new Date(local);
+      if (!Number.isNaN(d.getTime())) formData.set("scheduled_at", d.toISOString());
+    }
+    start(async () => {
+      const res = await scheduleSession(formData);
+      if (res.error) setError(res.error);
+      else scheduleRef.current?.reset();
+      router.refresh();
+    });
+  }
+
+  function onStart(s: SessionRow) {
+    if (!confirm(`Start "${s.title}" now? Students will be able to check in.`)) return;
+    setError(null);
+    start(async () => {
+      try {
+        const res = await startSession(s.id);
+        if (res.error) setError(res.error);
+        else router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not start session.");
+      }
+    });
+  }
 
   function onDelete(s: SessionRow) {
     if (
@@ -630,9 +662,9 @@ function SessionsTab({
   return (
     <>
       <Card>
-        <h2 className="font-bold mb-3">Create session</h2>
+        <h2 className="font-bold mb-3">Start class now</h2>
         <p className="text-slate-500 text-sm mb-3">
-          Creating a new session automatically closes any session that is still open.
+          Opens check-in immediately and closes any session that is still open.
         </p>
         <form ref={formRef} action={onCreate} className="space-y-2">
           <input name="title" placeholder="Title (e.g. Algebra — Lesson 5)" className={fieldClass()} />
@@ -648,6 +680,27 @@ function SessionsTab({
           </button>
         </form>
         {error && <p className="text-rose-600 text-sm mt-2">{error}</p>}
+      </Card>
+
+      <Card>
+        <h2 className="font-bold mb-1">Schedule next class</h2>
+        <p className="text-slate-500 text-sm mb-3">
+          Adds an upcoming class. Students see a countdown to it but can&apos;t check in
+          until you press <span className="font-semibold">Start</span> at class time.
+        </p>
+        <form ref={scheduleRef} action={onSchedule} className="space-y-2">
+          <input name="title" placeholder="Title (e.g. Algebra — Lesson 6)" className={fieldClass()} />
+          <input name="scheduled_at" type="datetime-local" className={fieldClass()} />
+          <input name="meet_link" placeholder="https://meet.google.com/xxx-xxxx-xxx" className={fieldClass()} />
+          <input name="code" placeholder="Spoken code word" className={fieldClass()} />
+          <button
+            type="submit"
+            disabled={pending}
+            className="w-full rounded-xl bg-slate-800 px-4 py-2.5 text-white font-semibold disabled:opacity-50"
+          >
+            Schedule class
+          </button>
+        </form>
       </Card>
 
       <Card>
@@ -752,36 +805,50 @@ function SessionsTab({
         <h2 className="font-bold mb-3">Recent sessions</h2>
         {error && <p className="text-rose-600 text-sm mb-2">{error}</p>}
         <ul className="divide-y text-sm">
-          {sessions.map((s) => (
-            <li key={s.id} className="flex items-center justify-between gap-2 py-2">
-              <div className="min-w-0">
-                <p className="font-medium truncate">{s.title}</p>
-                <p className="text-slate-500">{fmt(s.scheduled_at)}</p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <span
-                  className={`text-xs rounded-full px-2 py-0.5 ${
-                    s.is_open ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"
-                  }`}
-                >
-                  {s.is_open ? "open" : "closed"}
-                </span>
-                <button
-                  onClick={() => setEditing(s)}
-                  className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1"
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={() => onDelete(s)}
-                  disabled={pending}
-                  className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1 disabled:opacity-50"
-                >
-                  Delete
-                </button>
-              </div>
-            </li>
-          ))}
+          {sessions.map((s) => {
+            const upcoming = !s.is_open && !s.closed_at;
+            const status = s.is_open ? "open" : upcoming ? "upcoming" : "closed";
+            const statusClass = s.is_open
+              ? "bg-emerald-100 text-emerald-700"
+              : upcoming
+              ? "bg-amber-100 text-amber-700"
+              : "bg-slate-200 text-slate-600";
+            return (
+              <li key={s.id} className="flex items-center justify-between gap-2 py-2">
+                <div className="min-w-0">
+                  <p className="font-medium truncate">{s.title}</p>
+                  <p className="text-slate-500">{fmt(s.scheduled_at)}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={`text-xs rounded-full px-2 py-0.5 ${statusClass}`}>
+                    {status}
+                  </span>
+                  {upcoming && (
+                    <button
+                      onClick={() => onStart(s)}
+                      disabled={pending}
+                      className="text-xs rounded-lg bg-emerald-600 text-white px-2 py-1 disabled:opacity-50"
+                    >
+                      Start
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setEditing(s)}
+                    className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => onDelete(s)}
+                    disabled={pending}
+                    className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1 disabled:opacity-50"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </li>
+            );
+          })}
           {sessions.length === 0 && (
             <li className="py-6 text-center text-slate-400">No sessions yet.</li>
           )}
@@ -1083,7 +1150,24 @@ function AssignmentsTab({ matrix }: { matrix: AssignmentMatrix }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<AssignmentRow | null>(null);
+  const [open, setOpen] = useState<Set<number>>(() => new Set());
   const formRef = useRef<HTMLFormElement>(null);
+
+  function toggleOpen(id: number) {
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function onToggleStudent(assignmentId: number, studentId: number, isDone: boolean) {
+    start(async () => {
+      await setAssignmentStatus(assignmentId, studentId, isDone ? "pending" : "done");
+      router.refresh();
+    });
+  }
 
   function onCreate(formData: FormData) {
     setError(null);
@@ -1144,34 +1228,78 @@ function AssignmentsTab({ matrix }: { matrix: AssignmentMatrix }) {
       <Card>
         <h2 className="font-bold mb-3">Assignments ({assignments.length})</h2>
         <ul className="divide-y text-sm">
-          {assignments.map((a) => (
-            <li key={a.id} className="flex items-start justify-between gap-2 py-2">
-              <div className="min-w-0">
-                <p className="font-medium truncate">{a.title}</p>
-                {a.description && (
-                  <p className="text-slate-600 text-xs truncate">{a.description}</p>
+          {assignments.map((a) => {
+            const isOpen = open.has(a.id);
+            const doneCount = students.filter((s) => done[`${a.id}:${s.id}`]).length;
+            return (
+              <li key={a.id} className="py-2">
+                <div className="flex items-start justify-between gap-2">
+                  <button
+                    onClick={() => toggleOpen(a.id)}
+                    className="flex items-start gap-2 min-w-0 text-left"
+                    aria-expanded={isOpen}
+                  >
+                    <span
+                      className={`mt-0.5 text-slate-400 transition-transform ${
+                        isOpen ? "rotate-90" : ""
+                      }`}
+                    >
+                      ▶
+                    </span>
+                    <span className="min-w-0">
+                      <span className="font-medium block truncate">{a.title}</span>
+                      <span className="text-slate-400 text-xs">
+                        {doneCount}/{students.length} done
+                        {a.due_at ? ` · Due ${fmt(a.due_at)}` : ""}
+                      </span>
+                    </span>
+                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => setEditing(a)}
+                      className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1"
+                    >
+                      View / Edit
+                    </button>
+                    <button
+                      onClick={() => onDelete(a)}
+                      disabled={pending}
+                      className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1 disabled:opacity-50"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+
+                {isOpen && (
+                  <ul className="mt-2 ml-6 rounded-xl bg-slate-50 p-2 divide-y divide-slate-100">
+                    {students.length === 0 && (
+                      <li className="text-slate-400 py-1 px-1">No active students.</li>
+                    )}
+                    {students.map((s) => {
+                      const isDone = !!done[`${a.id}:${s.id}`];
+                      return (
+                        <li key={s.id} className="py-1 px-1">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={isDone}
+                              disabled={pending}
+                              onChange={() => onToggleStudent(a.id, s.id, isDone)}
+                              className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                            />
+                            <span className={isDone ? "text-slate-900" : "text-slate-600"}>
+                              {s.name}
+                            </span>
+                          </label>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 )}
-                {a.due_at && (
-                  <p className="text-slate-400 text-xs">Due {fmt(a.due_at)}</p>
-                )}
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={() => setEditing(a)}
-                  className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1"
-                >
-                  View / Edit
-                </button>
-                <button
-                  onClick={() => onDelete(a)}
-                  disabled={pending}
-                  className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1 disabled:opacity-50"
-                >
-                  Delete
-                </button>
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
           {assignments.length === 0 && (
             <li className="py-4 text-center text-slate-400">No assignments yet.</li>
           )}

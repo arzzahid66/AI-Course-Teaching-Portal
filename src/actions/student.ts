@@ -42,11 +42,17 @@ export type LedgerEntry = {
   created_at: string;
 };
 
+export type NextClass = {
+  title: string;
+  scheduled_at: string;
+};
+
 export type PortalData = {
   name: string;
   email: string | null;
   balance: number;
   checkin: CheckInState;
+  nextClass: NextClass | null;
   attendance: AttendanceEntry[];
   topics: { upcoming: Topic[]; past: Topic[] };
   assignments: AssignmentWithStatus[];
@@ -77,6 +83,21 @@ async function getBalance(studentId: number): Promise<number> {
     FROM ledger WHERE student_id = ${studentId}
   `) as { balance: string }[];
   return Number(rows[0]?.balance ?? 0);
+}
+
+/**
+ * The next scheduled-but-not-yet-started class (for the student countdown).
+ * Only the title and time are exposed — never the code or Meet link.
+ */
+async function getNextClass(): Promise<NextClass | null> {
+  const rows = (await sql`
+    SELECT title, scheduled_at
+    FROM sessions
+    WHERE is_open = false AND closed_at IS NULL
+    ORDER BY scheduled_at ASC
+    LIMIT 1
+  `) as NextClass[];
+  return rows[0] ?? null;
 }
 
 async function getOpenSession(): Promise<SessionRow | null> {
@@ -125,6 +146,7 @@ export async function getPortalData(): Promise<PortalData> {
 
   const balance = await getBalance(studentId);
   const checkin = await getCheckInState(studentId, balance);
+  const nextClass = await getNextClass();
 
   const attendance = (await sql`
     SELECT s.title, s.scheduled_at, a.status
@@ -166,6 +188,7 @@ export async function getPortalData(): Promise<PortalData> {
     email,
     balance,
     checkin,
+    nextClass,
     attendance,
     topics: { upcoming, past },
     assignments: assignmentsRaw,

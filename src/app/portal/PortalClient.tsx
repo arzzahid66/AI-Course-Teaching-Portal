@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { checkIn, type PortalData } from "@/actions/student";
+import { checkIn, type PortalData, type NextClass } from "@/actions/student";
 import { studentLogout } from "@/actions/studentAuth";
 
 type Tab = "class" | "topics" | "assignments" | "record";
@@ -74,6 +74,68 @@ function Card({ children }: { children: React.ReactNode }) {
 }
 
 // ---------------------------------------------------------------------------
+// Next-class countdown
+// ---------------------------------------------------------------------------
+function NextClassCard({ next }: { next: NextClass }) {
+  const target = new Date(next.scheduled_at).getTime();
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const diff = target - now;
+  const started = diff <= 0;
+
+  const totalSec = Math.max(0, Math.floor(diff / 1000));
+  const days = Math.floor(totalSec / 86400);
+  const hours = Math.floor((totalSec % 86400) / 3600);
+  const minutes = Math.floor((totalSec % 3600) / 60);
+  const seconds = totalSec % 60;
+
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const units: [number, string][] = [
+    [days, "days"],
+    [hours, "hrs"],
+    [minutes, "min"],
+    [seconds, "sec"],
+  ];
+
+  return (
+    <Card>
+      <div className="text-center">
+        <p className="text-slate-500 text-sm mb-1">Next class</p>
+        <h2 className="text-lg font-bold mb-1">{next.title}</h2>
+        <p className="text-slate-600 text-sm mb-4">{fmt(next.scheduled_at)}</p>
+
+        {started ? (
+          <p className="text-emerald-600 font-semibold">
+            Starting any moment — refresh for the code.
+          </p>
+        ) : (
+          <div className="flex justify-center gap-2">
+            {units.map(([value, label]) => (
+              <div
+                key={label}
+                className="rounded-xl bg-brand-50 px-3 py-2 min-w-[58px]"
+              >
+                <div className="text-2xl font-bold text-brand-700 tabular-nums">
+                  {pad(value)}
+                </div>
+                <div className="text-[10px] uppercase tracking-wide text-slate-400">
+                  {label}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Class / check-in
 // ---------------------------------------------------------------------------
 function ClassTab({ data }: { data: PortalData }) {
@@ -131,13 +193,20 @@ function ClassTab({ data }: { data: PortalData }) {
 
   if (c.kind === "no-session") {
     return (
-      <Card>
-        <div className="text-center">
-          <div className="text-5xl mb-3">😴</div>
-          <h2 className="text-lg font-bold mb-1">No class live right now</h2>
-          <p className="text-slate-600">Come back at class time and refresh.</p>
-        </div>
-      </Card>
+      <>
+        {data.nextClass && <NextClassCard next={data.nextClass} />}
+        <Card>
+          <div className="text-center">
+            <div className="text-5xl mb-3">😴</div>
+            <h2 className="text-lg font-bold mb-1">No class live right now</h2>
+            <p className="text-slate-600">
+              {data.nextClass
+                ? "Come back at class time and refresh to check in."
+                : "Come back at class time and refresh."}
+            </p>
+          </div>
+        </Card>
+      </>
     );
   }
 

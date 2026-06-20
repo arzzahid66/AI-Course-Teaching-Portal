@@ -332,6 +332,47 @@ export async function closeSession(sessionId: number): Promise<{ error?: string 
   return {};
 }
 
+/**
+ * Schedule a future class WITHOUT opening it. Students see a countdown to it
+ * but can't check in until the tutor starts it. Does not touch the live
+ * session (you can schedule next week's class while today's is still open).
+ */
+export async function scheduleSession(formData: FormData): Promise<{ error?: string }> {
+  assertAdmin();
+  const title = String(formData.get("title") ?? "").trim();
+  const scheduledAt = String(formData.get("scheduled_at") ?? "").trim();
+  const meetLink = String(formData.get("meet_link") ?? "").trim();
+  const code = String(formData.get("code") ?? "").trim();
+
+  if (!title || !scheduledAt || !meetLink || !code) {
+    return { error: "All fields are required." };
+  }
+
+  await sql`
+    INSERT INTO sessions (title, scheduled_at, meet_link, code, is_open)
+    VALUES (${title}, ${scheduledAt}, ${meetLink}, ${code}, false)
+  `;
+  revalidatePath("/admin");
+  return {};
+}
+
+/**
+ * Start (open) a previously scheduled session so students can check in.
+ * Closes any other open session first (only one live class at a time) and
+ * resets created_at to now() so the check-in window starts at the real start.
+ */
+export async function openSession(sessionId: number): Promise<{ error?: string }> {
+  assertAdmin();
+  await sql`UPDATE sessions SET is_open = false, closed_at = now() WHERE is_open = true`;
+  await sql`
+    UPDATE sessions
+    SET is_open = true, closed_at = NULL, created_at = now()
+    WHERE id = ${sessionId}
+  `;
+  revalidatePath("/admin");
+  return {};
+}
+
 /** Edit a session's details (title, time, meet link, code). */
 export async function updateSession(
   sessionId: number,
