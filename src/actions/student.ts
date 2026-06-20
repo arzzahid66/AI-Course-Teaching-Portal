@@ -2,10 +2,7 @@
 
 import { sql } from "@/lib/db";
 import { requireStudentId } from "@/lib/auth";
-import {
-  CHECKIN_WINDOW_BEFORE_MIN,
-  CHECKIN_WINDOW_AFTER_MIN,
-} from "@/lib/constants";
+import { CHECKIN_WINDOW_MIN } from "@/lib/constants";
 
 // ---------------------------------------------------------------------------
 // Types returned to the client. The session code and Meet link are NEVER
@@ -66,6 +63,7 @@ type SessionRow = {
   scheduled_at: string;
   meet_link: string;
   code: string;
+  created_at: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -83,7 +81,7 @@ async function getBalance(studentId: number): Promise<number> {
 
 async function getOpenSession(): Promise<SessionRow | null> {
   const rows = (await sql`
-    SELECT id, title, scheduled_at, meet_link, code
+    SELECT id, title, scheduled_at, meet_link, code, created_at
     FROM sessions
     WHERE is_open = true
     ORDER BY created_at DESC
@@ -199,16 +197,16 @@ export async function checkIn(codeInput: string): Promise<CheckInResult> {
     return { ok: false, error: "No class is live right now." };
   }
 
-  // Time window check
-  const scheduled = new Date(session.scheduled_at).getTime();
-  const now = Date.now();
-  const opensAt = scheduled - CHECKIN_WINDOW_BEFORE_MIN * 60 * 1000;
-  const closesAt = scheduled + CHECKIN_WINDOW_AFTER_MIN * 60 * 1000;
-  if (now < opensAt) {
-    return { ok: false, error: "Check-in hasn't opened yet. Come back at class time." };
-  }
-  if (now > closesAt) {
-    return { ok: false, error: "Check-in for this class has closed." };
+  // Check-in window: opens when the tutor opens the session (created_at) and
+  // stays open for CHECKIN_WINDOW_MIN minutes. This is anchored to class start,
+  // not the scheduled time, so opening late doesn't lock students out early.
+  const closesAt =
+    new Date(session.created_at).getTime() + CHECKIN_WINDOW_MIN * 60 * 1000;
+  if (Date.now() > closesAt) {
+    return {
+      ok: false,
+      error: `Check-in closed (only open for ${CHECKIN_WINDOW_MIN} min after class starts).`,
+    };
   }
 
   // Code check (case-insensitive, trimmed)

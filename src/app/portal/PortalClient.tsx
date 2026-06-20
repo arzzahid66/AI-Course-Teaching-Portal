@@ -272,7 +272,7 @@ function AssignmentsTab({ data }: { data: PortalData }) {
               <div>
                 <p className="font-semibold">{a.title}</p>
                 {a.description && (
-                  <p className="text-slate-600 text-sm">{a.description}</p>
+                  <p className="text-slate-600 text-sm whitespace-pre-line">{a.description}</p>
                 )}
                 {a.due_at && (
                   <p className="text-slate-400 text-xs mt-0.5">Due {fmtDate(a.due_at)}</p>

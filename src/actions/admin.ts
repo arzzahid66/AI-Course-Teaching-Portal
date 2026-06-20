@@ -332,6 +332,55 @@ export async function closeSession(sessionId: number): Promise<{ error?: string 
   return {};
 }
 
+/** Edit a session's details (title, time, meet link, code). */
+export async function updateSession(
+  sessionId: number,
+  formData: FormData
+): Promise<{ error?: string }> {
+  assertAdmin();
+  const title = String(formData.get("title") ?? "").trim();
+  const scheduledAt = String(formData.get("scheduled_at") ?? "").trim();
+  const meetLink = String(formData.get("meet_link") ?? "").trim();
+  const code = String(formData.get("code") ?? "").trim();
+
+  if (!title || !scheduledAt || !meetLink || !code) {
+    return { error: "All fields are required." };
+  }
+
+  try {
+    await sql`
+      UPDATE sessions
+      SET title = ${title}, scheduled_at = ${scheduledAt}, meet_link = ${meetLink}, code = ${code}
+      WHERE id = ${sessionId}
+    `;
+  } catch (e) {
+    return {
+      error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save session.",
+    };
+  }
+  revalidatePath("/admin");
+  return {};
+}
+
+/**
+ * Permanently delete a session AND its attendance rows + any penalties that
+ * were charged for it (so balances stay correct). Destructive — UI confirms.
+ */
+export async function deleteSession(sessionId: number): Promise<{ error?: string }> {
+  assertAdmin();
+  try {
+    await sql`DELETE FROM ledger WHERE session_id = ${sessionId}`;
+    await sql`DELETE FROM attendance WHERE session_id = ${sessionId}`;
+    await sql`DELETE FROM sessions WHERE id = ${sessionId}`;
+  } catch (e) {
+    return {
+      error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete session.",
+    };
+  }
+  revalidatePath("/admin");
+  return {};
+}
+
 // ---------------------------------------------------------------------------
 // Payments
 // ---------------------------------------------------------------------------
@@ -433,10 +482,44 @@ export async function createAssignment(formData: FormData): Promise<{ error?: st
   return {};
 }
 
-export async function deleteAssignment(id: number): Promise<void> {
+export async function updateAssignment(
+  id: number,
+  formData: FormData
+): Promise<{ error?: string }> {
   assertAdmin();
-  await sql`DELETE FROM assignments WHERE id = ${id}`;
+  const title = String(formData.get("title") ?? "").trim();
+  const description = String(formData.get("description") ?? "").trim();
+  const dueAt = String(formData.get("due_at") ?? "").trim();
+  if (!title) return { error: "Title is required." };
+
+  try {
+    await sql`
+      UPDATE assignments
+      SET title = ${title}, description = ${description || null}, due_at = ${dueAt || null}
+      WHERE id = ${id}
+    `;
+  } catch (e) {
+    return {
+      error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save assignment.",
+    };
+  }
   revalidatePath("/admin");
+  return {};
+}
+
+export async function deleteAssignment(id: number): Promise<{ error?: string }> {
+  assertAdmin();
+  try {
+    // assignment_status rows cascade on delete (see schema), so removing the
+    // assignment is enough.
+    await sql`DELETE FROM assignments WHERE id = ${id}`;
+  } catch (e) {
+    return {
+      error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete assignment.",
+    };
+  }
+  revalidatePath("/admin");
+  return {};
 }
 
 export async function getAssignmentMatrix(): Promise<AssignmentMatrix> {

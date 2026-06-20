@@ -11,11 +11,14 @@ import {
   deleteStudent,
   createSession,
   closeSession,
+  updateSession,
+  deleteSession,
   recordPayment,
   createTopic,
   setTopicCovered,
   deleteTopic,
   createAssignment,
+  updateAssignment,
   deleteAssignment,
   setAssignmentStatus,
   getStudentDetail,
@@ -25,6 +28,7 @@ import {
   type AttendeeRow,
   type TopicRow,
   type AssignmentMatrix,
+  type AssignmentRow,
   type StudentDetail,
 } from "@/actions/admin";
 
@@ -109,6 +113,17 @@ function fmt(d: string | null): string {
   if (!d) return "";
   const date = new Date(d);
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleString();
+}
+
+/** Format an ISO timestamp for a <input type="datetime-local"> default value. */
+function toDatetimeLocal(d: string | null): string {
+  if (!d) return "";
+  const date = new Date(d);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
+    date.getHours()
+  )}:${pad(date.getMinutes())}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -556,7 +571,27 @@ function SessionsTab({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<SessionRow | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
+
+  function onDelete(s: SessionRow) {
+    if (
+      !confirm(
+        `Delete "${s.title}"? This removes its attendance and any absence penalties charged for it. This cannot be undone.`
+      )
+    )
+      return;
+    setError(null);
+    start(async () => {
+      try {
+        const res = await deleteSession(s.id);
+        if (res.error) setError(res.error);
+        else router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not delete session.");
+      }
+    });
+  }
 
   function onCreate(formData: FormData) {
     setError(null);
@@ -715,20 +750,36 @@ function SessionsTab({
 
       <Card>
         <h2 className="font-bold mb-3">Recent sessions</h2>
+        {error && <p className="text-rose-600 text-sm mb-2">{error}</p>}
         <ul className="divide-y text-sm">
           {sessions.map((s) => (
-            <li key={s.id} className="flex items-center justify-between py-2">
-              <div>
-                <p className="font-medium">{s.title}</p>
+            <li key={s.id} className="flex items-center justify-between gap-2 py-2">
+              <div className="min-w-0">
+                <p className="font-medium truncate">{s.title}</p>
                 <p className="text-slate-500">{fmt(s.scheduled_at)}</p>
               </div>
-              <span
-                className={`text-xs rounded-full px-2 py-0.5 ${
-                  s.is_open ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"
-                }`}
-              >
-                {s.is_open ? "open" : "closed"}
-              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span
+                  className={`text-xs rounded-full px-2 py-0.5 ${
+                    s.is_open ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"
+                  }`}
+                >
+                  {s.is_open ? "open" : "closed"}
+                </span>
+                <button
+                  onClick={() => setEditing(s)}
+                  className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => onDelete(s)}
+                  disabled={pending}
+                  className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1 disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              </div>
             </li>
           ))}
           {sessions.length === 0 && (
@@ -736,7 +787,100 @@ function SessionsTab({
           )}
         </ul>
       </Card>
+
+      {editing && (
+        <SessionEditModal session={editing} onClose={() => setEditing(null)} />
+      )}
     </>
+  );
+}
+
+function SessionEditModal({
+  session,
+  onClose,
+}: {
+  session: SessionRow;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState<string | null>(null);
+
+  function onSave(formData: FormData) {
+    setMsg(null);
+    // Convert the local datetime-local value to an absolute UTC ISO timestamp.
+    const local = String(formData.get("scheduled_at") ?? "");
+    if (local) {
+      const d = new Date(local);
+      if (!Number.isNaN(d.getTime())) formData.set("scheduled_at", d.toISOString());
+    }
+    start(async () => {
+      try {
+        const res = await updateSession(session.id, formData);
+        if (res.error) {
+          setMsg(res.error);
+          return;
+        }
+        router.refresh();
+        onClose();
+      } catch (e) {
+        setMsg(e instanceof Error ? e.message : "Could not save session.");
+      }
+    });
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4 z-50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-bold">Edit session</h2>
+          <button onClick={onClose} className="text-slate-400 text-2xl leading-none">
+            ×
+          </button>
+        </div>
+
+        <form action={onSave} className="space-y-2">
+          <input
+            name="title"
+            defaultValue={session.title}
+            placeholder="Title"
+            className={fieldClass()}
+          />
+          <input
+            name="scheduled_at"
+            type="datetime-local"
+            defaultValue={toDatetimeLocal(session.scheduled_at)}
+            className={fieldClass()}
+          />
+          <input
+            name="meet_link"
+            defaultValue={session.meet_link}
+            placeholder="https://meet.google.com/xxx-xxxx-xxx"
+            className={fieldClass()}
+          />
+          <input
+            name="code"
+            defaultValue={session.code}
+            placeholder="Spoken code word"
+            className={fieldClass()}
+          />
+          <button
+            type="submit"
+            disabled={pending}
+            className="w-full rounded-xl bg-brand-600 px-4 py-2.5 text-white font-semibold disabled:opacity-50"
+          >
+            Save changes
+          </button>
+        </form>
+        {msg && <p className="text-sm mt-2 text-slate-600">{msg}</p>}
+      </div>
+    </div>
   );
 }
 
@@ -938,6 +1082,7 @@ function AssignmentsTab({ matrix }: { matrix: AssignmentMatrix }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<AssignmentRow | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
   function onCreate(formData: FormData) {
@@ -955,6 +1100,21 @@ function AssignmentsTab({ matrix }: { matrix: AssignmentMatrix }) {
     });
   }
 
+  function onDelete(a: AssignmentRow) {
+    if (!confirm(`Delete assignment "${a.title}"? This removes everyone's progress for it.`))
+      return;
+    setError(null);
+    start(async () => {
+      try {
+        const res = await deleteAssignment(a.id);
+        if (res.error) setError(res.error);
+        else router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not delete assignment.");
+      }
+    });
+  }
+
   const { assignments, students, done } = matrix;
 
   return (
@@ -963,7 +1123,12 @@ function AssignmentsTab({ matrix }: { matrix: AssignmentMatrix }) {
         <h2 className="font-bold mb-3">Add assignment</h2>
         <form ref={formRef} action={onCreate} className="space-y-2">
           <input name="title" placeholder="Assignment title" className={fieldClass()} />
-          <input name="description" placeholder="Details (optional)" className={fieldClass()} />
+          <textarea
+            name="description"
+            rows={4}
+            placeholder="Details (optional) — press Enter for a new line"
+            className={fieldClass()}
+          />
           <input name="due_at" type="datetime-local" className={fieldClass()} />
           <button
             type="submit"
@@ -974,6 +1139,43 @@ function AssignmentsTab({ matrix }: { matrix: AssignmentMatrix }) {
           </button>
         </form>
         {error && <p className="text-rose-600 text-sm mt-2">{error}</p>}
+      </Card>
+
+      <Card>
+        <h2 className="font-bold mb-3">Assignments ({assignments.length})</h2>
+        <ul className="divide-y text-sm">
+          {assignments.map((a) => (
+            <li key={a.id} className="flex items-start justify-between gap-2 py-2">
+              <div className="min-w-0">
+                <p className="font-medium truncate">{a.title}</p>
+                {a.description && (
+                  <p className="text-slate-600 text-xs truncate">{a.description}</p>
+                )}
+                {a.due_at && (
+                  <p className="text-slate-400 text-xs">Due {fmt(a.due_at)}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setEditing(a)}
+                  className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1"
+                >
+                  View / Edit
+                </button>
+                <button
+                  onClick={() => onDelete(a)}
+                  disabled={pending}
+                  className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1 disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              </div>
+            </li>
+          ))}
+          {assignments.length === 0 && (
+            <li className="py-4 text-center text-slate-400">No assignments yet.</li>
+          )}
+        </ul>
       </Card>
 
       <Card>
@@ -992,17 +1194,15 @@ function AssignmentsTab({ matrix }: { matrix: AssignmentMatrix }) {
                   {assignments.map((a) => (
                     <th key={a.id} className="py-2 px-2 align-bottom">
                       <div className="flex items-center gap-1">
-                        <span className="whitespace-nowrap max-w-[120px] truncate" title={a.title}>
-                          {a.title}
-                        </span>
                         <button
-                          onClick={() =>
-                            start(async () => {
-                              if (!confirm(`Delete assignment "${a.title}"?`)) return;
-                              await deleteAssignment(a.id);
-                              router.refresh();
-                            })
-                          }
+                          onClick={() => setEditing(a)}
+                          className="whitespace-nowrap max-w-[120px] truncate underline decoration-dotted text-brand-700"
+                          title={`Edit "${a.title}"`}
+                        >
+                          {a.title}
+                        </button>
+                        <button
+                          onClick={() => onDelete(a)}
                           className="text-slate-300"
                           title="Delete assignment"
                         >
@@ -1054,6 +1254,124 @@ function AssignmentsTab({ matrix }: { matrix: AssignmentMatrix }) {
           </div>
         )}
       </Card>
+
+      {editing && (
+        <AssignmentEditModal assignment={editing} onClose={() => setEditing(null)} />
+      )}
     </>
+  );
+}
+
+function AssignmentEditModal({
+  assignment,
+  onClose,
+}: {
+  assignment: AssignmentRow;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState<string | null>(null);
+
+  function onSave(formData: FormData) {
+    setMsg(null);
+    const local = String(formData.get("due_at") ?? "");
+    if (local) {
+      const d = new Date(local);
+      if (!Number.isNaN(d.getTime())) formData.set("due_at", d.toISOString());
+    } else {
+      formData.set("due_at", "");
+    }
+    start(async () => {
+      try {
+        const res = await updateAssignment(assignment.id, formData);
+        if (res.error) {
+          setMsg(res.error);
+          return;
+        }
+        router.refresh();
+        onClose();
+      } catch (e) {
+        setMsg(e instanceof Error ? e.message : "Could not save assignment.");
+      }
+    });
+  }
+
+  function onDelete() {
+    if (!confirm(`Delete assignment "${assignment.title}"? This removes everyone's progress for it.`))
+      return;
+    setMsg(null);
+    start(async () => {
+      try {
+        const res = await deleteAssignment(assignment.id);
+        if (res.error) {
+          setMsg(res.error);
+          return;
+        }
+        router.refresh();
+        onClose();
+      } catch (e) {
+        setMsg(e instanceof Error ? e.message : "Could not delete assignment.");
+      }
+    });
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4 z-50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-bold">Edit assignment</h2>
+          <button onClick={onClose} className="text-slate-400 text-2xl leading-none">
+            ×
+          </button>
+        </div>
+
+        <form action={onSave} className="space-y-2">
+          <input
+            name="title"
+            defaultValue={assignment.title}
+            placeholder="Assignment title"
+            className={fieldClass()}
+          />
+          <textarea
+            name="description"
+            defaultValue={assignment.description ?? ""}
+            rows={5}
+            placeholder="Details (optional) — press Enter for a new line"
+            className={fieldClass()}
+          />
+          <input
+            name="due_at"
+            type="datetime-local"
+            defaultValue={toDatetimeLocal(assignment.due_at)}
+            className={fieldClass()}
+          />
+          <button
+            type="submit"
+            disabled={pending}
+            className="w-full rounded-xl bg-brand-600 px-4 py-2.5 text-white font-semibold disabled:opacity-50"
+          >
+            Save changes
+          </button>
+        </form>
+        {msg && <p className="text-sm mt-2 text-slate-600">{msg}</p>}
+
+        <div className="border-t mt-5 pt-4">
+          <button
+            onClick={onDelete}
+            disabled={pending}
+            className="w-full rounded-xl border border-rose-300 text-rose-700 px-4 py-2.5 font-semibold disabled:opacity-50"
+          >
+            Delete assignment
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
