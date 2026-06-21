@@ -4,6 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { checkIn, type PortalData, type NextClass } from "@/actions/student";
 import { studentLogout } from "@/actions/studentAuth";
+import {
+  PAYMENT_EASYPAISA_NUMBER,
+  PAYMENT_ACCOUNT_NAME,
+  TUTOR_WHATSAPP_NUMBER,
+} from "@/lib/constants";
 
 type Tab = "class" | "topics" | "assignments" | "record";
 
@@ -136,6 +141,85 @@ function NextClassCard({ next }: { next: NextClass }) {
 }
 
 // ---------------------------------------------------------------------------
+// Blocked (owes a missed-class fee) — show how to pay & get unblocked
+// ---------------------------------------------------------------------------
+function BlockedCard({ balance }: { balance: number }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copyNumber() {
+    try {
+      await navigator.clipboard.writeText(PAYMENT_EASYPAISA_NUMBER);
+    } catch {
+      window.prompt("EasyPaisa number:", PAYMENT_EASYPAISA_NUMBER);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+
+  const waText = encodeURIComponent(
+    `Hi! I've paid Rs ${balance} for my missed class. Here is my payment screenshot.`
+  );
+  const waLink = `https://wa.me/${TUTOR_WHATSAPP_NUMBER}?text=${waText}`;
+
+  return (
+    <Card>
+      <div className="text-center mb-4">
+        <div className="text-5xl mb-3">⛔️</div>
+        <p className="text-lg font-semibold text-rose-600 mb-1">You owe Rs {balance}</p>
+        <p className="text-slate-600 text-sm">
+          You missed a class. Clear your dues to check in again.
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 divide-y">
+        {/* Step 1 — pay */}
+        <div className="p-3">
+          <p className="text-sm font-semibold mb-2">
+            1. Send Rs {balance} via EasyPaisa
+          </p>
+          <div className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2">
+            <div className="min-w-0">
+              <p className="font-mono font-bold tracking-wide">{PAYMENT_EASYPAISA_NUMBER}</p>
+              {PAYMENT_ACCOUNT_NAME && (
+                <p className="text-slate-500 text-xs truncate">{PAYMENT_ACCOUNT_NAME}</p>
+              )}
+            </div>
+            <button
+              onClick={copyNumber}
+              className="shrink-0 text-xs rounded-lg border border-slate-300 px-2 py-1"
+            >
+              {copied ? "Copied!" : "Copy"}
+            </button>
+          </div>
+        </div>
+
+        {/* Step 2 — send screenshot */}
+        <div className="p-3">
+          <p className="text-sm font-semibold mb-2">2. Send the payment screenshot</p>
+          <a
+            href={waLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block w-full text-center rounded-xl bg-green-600 px-4 py-2.5 text-white font-semibold active:scale-[0.98] transition"
+          >
+            Send screenshot on WhatsApp
+          </a>
+        </div>
+
+        {/* Step 3 — wait */}
+        <div className="p-3">
+          <p className="text-sm font-semibold mb-1">3. Wait to be unblocked</p>
+          <p className="text-slate-500 text-xs">
+            Once your tutor confirms the payment, this screen clears and you can check in
+            again. Refresh after a few minutes.
+          </p>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Class / check-in
 // ---------------------------------------------------------------------------
 function ClassTab({ data }: { data: PortalData }) {
@@ -175,20 +259,7 @@ function ClassTab({ data }: { data: PortalData }) {
   }
 
   if (c.kind === "blocked") {
-    return (
-      <Card>
-        <div className="text-center">
-          <div className="text-5xl mb-3">⛔️</div>
-          <p className="text-lg font-semibold text-rose-600 mb-1">
-            You owe Rs {c.balance}
-          </p>
-          <p className="text-slate-600">
-            Please pay your tutor to rejoin. Once your payment is recorded,
-            you&apos;ll be able to check in again.
-          </p>
-        </div>
-      </Card>
-    );
+    return <BlockedCard balance={c.balance} />;
   }
 
   if (c.kind === "no-session") {
