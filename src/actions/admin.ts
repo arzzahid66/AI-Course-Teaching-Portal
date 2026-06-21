@@ -501,9 +501,16 @@ export type AssignmentRow = {
   due_at: string | null;
 };
 
+export type AssignmentStudent = {
+  id: number;
+  name: string;
+  email: string | null;
+  whatsapp: string | null;
+};
+
 export type AssignmentMatrix = {
   assignments: AssignmentRow[];
-  students: { id: number; name: string }[];
+  students: AssignmentStudent[];
   // doneMap[`${assignmentId}:${studentId}`] === true when done
   done: Record<string, boolean>;
 };
@@ -572,8 +579,8 @@ export async function getAssignmentMatrix(): Promise<AssignmentMatrix> {
   `) as AssignmentRow[];
 
   const students = (await sql`
-    SELECT id, name FROM students WHERE status = 'active' ORDER BY name ASC
-  `) as { id: number; name: string }[];
+    SELECT id, name, email, whatsapp FROM students WHERE status = 'active' ORDER BY name ASC
+  `) as AssignmentStudent[];
 
   const statuses = (await sql`
     SELECT assignment_id, student_id, status FROM assignment_status WHERE status = 'done'
@@ -611,7 +618,15 @@ export type StudentDetail = {
   email: string | null;
   balance: number;
   attendance: { title: string; scheduled_at: string; status: string }[];
-  ledger: { type: string; amount: number; reason: string | null; created_at: string }[];
+  ledger: {
+    id: number;
+    type: string;
+    amount: number;
+    reason: string | null;
+    created_at: string;
+    session_title: string | null;
+    session_scheduled_at: string | null;
+  }[];
   assignments: { title: string; status: "pending" | "done" }[];
 };
 
@@ -634,10 +649,23 @@ export async function getStudentDetail(studentId: number): Promise<StudentDetail
   `) as { title: string; scheduled_at: string; status: string }[];
 
   const ledger = (await sql`
-    SELECT type, amount, reason, created_at
-    FROM ledger WHERE student_id = ${studentId}
-    ORDER BY created_at DESC LIMIT 50
-  `) as { type: string; amount: string; reason: string | null; created_at: string }[];
+    SELECT
+      l.id, l.type, l.amount, l.reason, l.created_at,
+      s.title AS session_title,
+      s.scheduled_at AS session_scheduled_at
+    FROM ledger l
+    LEFT JOIN sessions s ON s.id = l.session_id
+    WHERE l.student_id = ${studentId}
+    ORDER BY l.created_at DESC LIMIT 50
+  `) as {
+    id: number;
+    type: string;
+    amount: string;
+    reason: string | null;
+    created_at: string;
+    session_title: string | null;
+    session_scheduled_at: string | null;
+  }[];
 
   const assignments = (await sql`
     SELECT a.title, COALESCE(st.status, 'pending') AS status
@@ -657,4 +685,50 @@ export async function getStudentDetail(studentId: number): Promise<StudentDetail
     ledger: ledger.map((l) => ({ ...l, amount: Number(l.amount) })),
     assignments,
   };
+}
+
+/** Edit a single fee/payment ledger entry (type, amount, reason). */
+export async function updateLedgerEntry(
+  id: number,
+  formData: FormData
+): Promise<{ error?: string }> {
+  assertAdmin();
+  const type = String(formData.get("type") ?? "").trim();
+  const amount = Number(formData.get("amount"));
+  const reason = String(formData.get("reason") ?? "").trim();
+
+  if (type !== "penalty" && type !== "payment") {
+    return { error: "Type must be a fee or a payment." };
+  }
+  if (!amount || Number.isNaN(amount) || amount <= 0) {
+    return { error: "Enter a positive amount." };
+  }
+
+  try {
+    await sql`
+      UPDATE ledger
+      SET type = ${type}, amount = ${amount}, reason = ${reason || null}
+      WHERE id = ${id}
+    `;
+  } catch (e) {
+    return {
+      error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save entry.",
+    };
+  }
+  revalidatePath("/admin");
+  return {};
+}
+
+/** Permanently delete a single fee/payment ledger entry. */
+export async function deleteLedgerEntry(id: number): Promise<{ error?: string }> {
+  assertAdmin();
+  try {
+    await sql`DELETE FROM ledger WHERE id = ${id}`;
+  } catch (e) {
+    return {
+      error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete entry.",
+    };
+  }
+  revalidatePath("/admin");
+  return {};
 }

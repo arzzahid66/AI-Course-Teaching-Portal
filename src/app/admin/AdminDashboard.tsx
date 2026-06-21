@@ -24,6 +24,8 @@ import {
   deleteAssignment,
   setAssignmentStatus,
   getStudentDetail,
+  updateLedgerEntry,
+  deleteLedgerEntry,
   adminLogout,
   type StudentRow,
   type SessionRow,
@@ -523,11 +525,14 @@ function StudentDetailModal({
               ))}
             </ul>
 
-            <h3 className="font-semibold text-sm mb-1">Fee history</h3>
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="font-semibold text-sm">Fee history</h3>
+              <span className="text-slate-400 text-xs">Edit fees in the Payments tab</span>
+            </div>
             <ul className="text-sm divide-y">
               {data.ledger.length === 0 && <li className="text-slate-400 py-1">None</li>}
-              {data.ledger.map((l, i) => (
-                <li key={i} className="flex justify-between py-1.5">
+              {data.ledger.map((l) => (
+                <li key={l.id} className="flex justify-between py-1.5">
                   <span>
                     {l.reason || l.type}
                     <span className="text-slate-400 text-xs"> · {fmt(l.created_at)}</span>
@@ -555,6 +560,123 @@ function StudentDetailModal({
         </div>
       </div>
     </div>
+  );
+}
+
+function LedgerRow({
+  entry,
+  onChanged,
+}: {
+  entry: StudentDetail["ledger"][number];
+  onChanged: () => void | Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [pending, start] = useTransition();
+  const [err, setErr] = useState<string | null>(null);
+
+  function onSave(formData: FormData) {
+    setErr(null);
+    start(async () => {
+      const res = await updateLedgerEntry(entry.id, formData);
+      if (res.error) {
+        setErr(res.error);
+        return;
+      }
+      setEditing(false);
+      await onChanged();
+    });
+  }
+
+  function onDelete() {
+    if (!confirm("Delete this fee entry? This changes the student's balance.")) return;
+    setErr(null);
+    start(async () => {
+      const res = await deleteLedgerEntry(entry.id);
+      if (res.error) {
+        setErr(res.error);
+        return;
+      }
+      await onChanged();
+    });
+  }
+
+  if (editing) {
+    return (
+      <li className="py-2">
+        <form action={onSave} className="grid grid-cols-2 gap-2">
+          <select name="type" defaultValue={entry.type} className={fieldClass()}>
+            <option value="penalty">Fee (penalty)</option>
+            <option value="payment">Payment</option>
+          </select>
+          <input
+            name="amount"
+            type="number"
+            min="1"
+            step="1"
+            defaultValue={entry.amount}
+            placeholder="Amount"
+            className={fieldClass()}
+          />
+          <input
+            name="reason"
+            defaultValue={entry.reason ?? ""}
+            placeholder="Reason"
+            className={fieldClass() + " col-span-2"}
+          />
+          <button
+            type="submit"
+            disabled={pending}
+            className="rounded-xl bg-brand-600 px-3 py-2 text-white font-semibold disabled:opacity-50"
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setEditing(false);
+              setErr(null);
+            }}
+            disabled={pending}
+            className="rounded-xl border border-slate-300 px-3 py-2 font-semibold"
+          >
+            Cancel
+          </button>
+        </form>
+        {err && <p className="text-rose-600 text-xs mt-1">{err}</p>}
+      </li>
+    );
+  }
+
+  return (
+    <li className="flex items-center justify-between gap-2 py-1.5">
+      <span className="min-w-0">
+        <span className="block truncate font-medium">
+          {entry.session_title || entry.reason || entry.type}
+        </span>
+        <span className="text-slate-400 text-xs block">
+          {entry.session_title && entry.reason ? `${entry.reason} · ` : ""}
+          {fmt(entry.session_scheduled_at || entry.created_at)}
+        </span>
+      </span>
+      <div className="flex items-center gap-2 shrink-0">
+        <span className={entry.type === "penalty" ? "text-rose-600" : "text-emerald-600"}>
+          {entry.type === "penalty" ? "+" : "−"}Rs {entry.amount}
+        </span>
+        <button
+          onClick={() => setEditing(true)}
+          className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-0.5"
+        >
+          Edit
+        </button>
+        <button
+          onClick={onDelete}
+          disabled={pending}
+          className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-0.5 disabled:opacity-50"
+        >
+          Delete
+        </button>
+      </div>
+    </li>
   );
 }
 
@@ -1013,15 +1135,13 @@ function PaymentsTab({ students }: { students: StudentRow[] }) {
       </Card>
 
       <Card>
-        <h2 className="font-bold mb-3">Balances</h2>
+        <h2 className="font-bold mb-1">Balances &amp; fees</h2>
+        <p className="text-slate-500 text-sm mb-3">
+          Tap a student to view, edit or remove their fee &amp; payment entries.
+        </p>
         <ul className="divide-y text-sm">
           {students.map((s) => (
-            <li key={s.id} className="flex items-center justify-between py-2">
-              <span>{s.name}</span>
-              <span className={s.balance > 0 ? "text-rose-600 font-semibold" : "text-slate-400"}>
-                {s.balance > 0 ? `Rs ${s.balance}` : "clear"}
-              </span>
-            </li>
+            <StudentBalanceRow key={s.id} student={s} />
           ))}
           {students.length === 0 && (
             <li className="py-6 text-center text-slate-400">No students yet.</li>
@@ -1029,6 +1149,70 @@ function PaymentsTab({ students }: { students: StudentRow[] }) {
         </ul>
       </Card>
     </>
+  );
+}
+
+function StudentBalanceRow({ student }: { student: StudentRow }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState<StudentDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    setDetail(await getStudentDetail(student.id));
+    setLoading(false);
+  }
+
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && !detail) load();
+  }
+
+  return (
+    <li className="py-2">
+      <button
+        onClick={toggle}
+        aria-expanded={open}
+        className="w-full flex items-center justify-between gap-2 text-left"
+      >
+        <span className="flex items-center gap-2 min-w-0">
+          <span className={`text-slate-400 transition-transform ${open ? "rotate-90" : ""}`}>
+            ▶
+          </span>
+          <span className="truncate font-medium">{student.name}</span>
+        </span>
+        <span
+          className={student.balance > 0 ? "text-rose-600 font-semibold" : "text-slate-400"}
+        >
+          {student.balance > 0 ? `Rs ${student.balance}` : "clear"}
+        </span>
+      </button>
+
+      {open && (
+        <div className="mt-2 ml-6 rounded-xl bg-slate-50 p-2">
+          {loading && !detail ? (
+            <p className="text-slate-400 text-sm py-1 px-1">Loading…</p>
+          ) : !detail || detail.ledger.length === 0 ? (
+            <p className="text-slate-400 text-sm py-1 px-1">No fees or payments yet.</p>
+          ) : (
+            <ul className="text-sm divide-y">
+              {detail.ledger.map((l) => (
+                <LedgerRow
+                  key={l.id}
+                  entry={l}
+                  onChanged={async () => {
+                    await load();
+                    router.refresh();
+                  }}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </li>
   );
 }
 
@@ -1279,17 +1463,28 @@ function AssignmentsTab({ matrix }: { matrix: AssignmentMatrix }) {
                     {students.map((s) => {
                       const isDone = !!done[`${a.id}:${s.id}`];
                       return (
-                        <li key={s.id} className="py-1 px-1">
-                          <label className="flex items-center gap-2 cursor-pointer">
+                        <li key={s.id} className="py-1.5 px-1">
+                          <label className="flex items-start gap-2 cursor-pointer">
                             <input
                               type="checkbox"
                               checked={isDone}
                               disabled={pending}
                               onChange={() => onToggleStudent(a.id, s.id, isDone)}
-                              className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
                             />
-                            <span className={isDone ? "text-slate-900" : "text-slate-600"}>
-                              {s.name}
+                            <span className="min-w-0">
+                              <span
+                                className={`block font-medium ${
+                                  isDone ? "text-slate-900" : "text-slate-700"
+                                }`}
+                              >
+                                {s.name}
+                              </span>
+                              <span className="block text-xs text-slate-400 break-all">
+                                {s.email || "no email"}
+                                {" · "}
+                                {s.whatsapp || "no WhatsApp"}
+                              </span>
                             </span>
                           </label>
                         </li>
