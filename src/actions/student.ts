@@ -136,7 +136,7 @@ async function getCheckInState(studentId: number, balance: number): Promise<Chec
 // Portal data for the logged-in student
 // ---------------------------------------------------------------------------
 export async function getPortalData(): Promise<PortalData> {
-  const studentId = requireStudentId();
+  const studentId = await requireStudentId();
 
   const students = (await sql`
     SELECT name, email FROM students WHERE id = ${studentId} LIMIT 1
@@ -200,7 +200,7 @@ export async function getPortalData(): Promise<PortalData> {
 // Check-in (verified entirely server-side; resolves student from the cookie)
 // ---------------------------------------------------------------------------
 export async function checkIn(codeInput: string): Promise<CheckInResult> {
-  const studentId = requireStudentId();
+  const studentId = await requireStudentId();
 
   const students = (await sql`
     SELECT status FROM students WHERE id = ${studentId} LIMIT 1

@@ -4,8 +4,8 @@ import LoginForm from "./LoginForm";
 
 export const dynamic = "force-dynamic";
 
-export default function StudentLoginPage() {
-  if (getStudentSession() !== null) {
+export default async function StudentLoginPage() {
+  if ((await getStudentSession()) !== null) {
     redirect("/portal");
   }
   return <LoginForm />;

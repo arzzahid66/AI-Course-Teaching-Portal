@@ -32,11 +32,11 @@ export async function studentLogin(
     return { error: "Your account is not active. Contact your tutor." };
   }
 
-  setStudentCookie(student.id);
+  await setStudentCookie(student.id);
   redirect("/portal");
 }
 
 export async function studentLogout(): Promise<void> {
-  clearStudentCookie();
+  await clearStudentCookie();
   redirect("/login");
 }

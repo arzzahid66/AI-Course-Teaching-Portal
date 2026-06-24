@@ -6,7 +6,7 @@ import PortalClient from "./PortalClient";
 export const dynamic = "force-dynamic";
 
 export default async function PortalPage() {
-  if (getStudentSession() === null) {
+  if ((await getStudentSession()) === null) {
     redirect("/login");
   }
   const data = await getPortalData();

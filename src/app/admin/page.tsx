@@ -12,7 +12,7 @@ import AdminDashboard from "./AdminDashboard";
 export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
-  if (!isAdmin()) {
+  if (!(await isAdmin())) {
     return <LoginForm />;
   }
 

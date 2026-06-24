@@ -25,13 +25,13 @@ export async function adminLogin(
   if (!checkAdminEmail(email) || !checkAdminPassword(password)) {
     return { error: "Wrong email or password." };
   }
-  setAdminCookie();
+  await setAdminCookie();
   revalidatePath("/admin");
   return {};
 }
 
 export async function adminLogout(): Promise<void> {
-  clearAdminCookie();
+  await clearAdminCookie();
   revalidatePath("/admin");
 }
 
@@ -50,7 +50,7 @@ export type StudentRow = {
 };
 
 export async function getStudents(): Promise<StudentRow[]> {
-  assertAdmin();
+  await assertAdmin();
   const rows = (await sql`
     SELECT
       s.id, s.name, s.whatsapp, s.gender, s.email,
@@ -67,7 +67,7 @@ export async function getStudents(): Promise<StudentRow[]> {
 }
 
 export async function addStudent(formData: FormData): Promise<{ error?: string }> {
-  assertAdmin();
+  await assertAdmin();
   const name = String(formData.get("name") ?? "").trim();
   const whatsapp = String(formData.get("whatsapp") ?? "").trim();
   const gender = String(formData.get("gender") ?? "").trim();
@@ -100,7 +100,7 @@ export async function setStudentCredentials(
   email: string,
   password: string
 ): Promise<{ error?: string }> {
-  assertAdmin();
+  await assertAdmin();
   const e = email.trim().toLowerCase();
   if (!e) return { error: "Email is required." };
   if (password.length < 4) return { error: "Password must be at least 4 characters." };
@@ -122,7 +122,7 @@ export async function setStudentCredentials(
  * Only name is required; email+password together enable a login.
  */
 export async function bulkAddStudents(formData: FormData): Promise<{ created: number; error?: string }> {
-  assertAdmin();
+  await assertAdmin();
   const raw = String(formData.get("bulk") ?? "");
   const lines = raw
     .split("\n")
@@ -157,7 +157,7 @@ export async function setStudentStatus(
   studentId: number,
   status: "active" | "inactive"
 ): Promise<void> {
-  assertAdmin();
+  await assertAdmin();
   await sql`UPDATE students SET status = ${status} WHERE id = ${studentId}`;
   revalidatePath("/admin");
 }
@@ -167,7 +167,7 @@ export async function updateStudent(
   studentId: number,
   formData: FormData
 ): Promise<{ error?: string }> {
-  assertAdmin();
+  await assertAdmin();
   const name = String(formData.get("name") ?? "").trim();
   const whatsapp = String(formData.get("whatsapp") ?? "").trim();
   const gender = String(formData.get("gender") ?? "").trim();
@@ -188,7 +188,7 @@ export async function updateStudent(
  * removed before the student to satisfy foreign keys.
  */
 export async function deleteStudent(studentId: number): Promise<{ error?: string }> {
-  assertAdmin();
+  await assertAdmin();
   try {
     await sql`DELETE FROM assignment_status WHERE student_id = ${studentId}`;
     await sql`DELETE FROM attendance WHERE student_id = ${studentId}`;
@@ -230,7 +230,7 @@ export async function getOpenSessionWithAttendance(): Promise<{
   session: SessionRow | null;
   attendees: AttendeeRow[];
 }> {
-  assertAdmin();
+  await assertAdmin();
   const sessions = (await sql`
     SELECT id, title, scheduled_at, meet_link, code, is_open, closed_at
     FROM sessions WHERE is_open = true
@@ -256,7 +256,7 @@ export async function getOpenSessionWithAttendance(): Promise<{
 }
 
 export async function getRecentSessions(): Promise<SessionRow[]> {
-  assertAdmin();
+  await assertAdmin();
   return (await sql`
     SELECT id, title, scheduled_at, meet_link, code, is_open, closed_at
     FROM sessions
@@ -266,7 +266,7 @@ export async function getRecentSessions(): Promise<SessionRow[]> {
 }
 
 export async function createSession(formData: FormData): Promise<{ error?: string }> {
-  assertAdmin();
+  await assertAdmin();
   const title = String(formData.get("title") ?? "").trim();
   const scheduledAt = String(formData.get("scheduled_at") ?? "").trim();
   const meetLink = String(formData.get("meet_link") ?? "").trim();
@@ -292,7 +292,7 @@ export async function createSession(formData: FormData): Promise<{ error?: strin
  * attendance row for it: insert an 'absent' attendance row + a Rs 200 penalty.
  */
 export async function closeSession(sessionId: number): Promise<{ error?: string }> {
-  assertAdmin();
+  await assertAdmin();
 
   const open = (await sql`
     SELECT id FROM sessions WHERE id = ${sessionId} AND is_open = true LIMIT 1
@@ -338,7 +338,7 @@ export async function closeSession(sessionId: number): Promise<{ error?: string 
  * session (you can schedule next week's class while today's is still open).
  */
 export async function scheduleSession(formData: FormData): Promise<{ error?: string }> {
-  assertAdmin();
+  await assertAdmin();
   const title = String(formData.get("title") ?? "").trim();
   const scheduledAt = String(formData.get("scheduled_at") ?? "").trim();
   const meetLink = String(formData.get("meet_link") ?? "").trim();
@@ -362,7 +362,7 @@ export async function scheduleSession(formData: FormData): Promise<{ error?: str
  * resets created_at to now() so the check-in window starts at the real start.
  */
 export async function openSession(sessionId: number): Promise<{ error?: string }> {
-  assertAdmin();
+  await assertAdmin();
   await sql`UPDATE sessions SET is_open = false, closed_at = now() WHERE is_open = true`;
   await sql`
     UPDATE sessions
@@ -378,7 +378,7 @@ export async function updateSession(
   sessionId: number,
   formData: FormData
 ): Promise<{ error?: string }> {
-  assertAdmin();
+  await assertAdmin();
   const title = String(formData.get("title") ?? "").trim();
   const scheduledAt = String(formData.get("scheduled_at") ?? "").trim();
   const meetLink = String(formData.get("meet_link") ?? "").trim();
@@ -408,7 +408,7 @@ export async function updateSession(
  * were charged for it (so balances stay correct). Destructive — UI confirms.
  */
 export async function deleteSession(sessionId: number): Promise<{ error?: string }> {
-  assertAdmin();
+  await assertAdmin();
   try {
     await sql`DELETE FROM ledger WHERE session_id = ${sessionId}`;
     await sql`DELETE FROM attendance WHERE session_id = ${sessionId}`;
@@ -426,7 +426,7 @@ export async function deleteSession(sessionId: number): Promise<{ error?: string
 // Payments
 // ---------------------------------------------------------------------------
 export async function recordPayment(formData: FormData): Promise<{ error?: string }> {
-  assertAdmin();
+  await assertAdmin();
   const studentId = Number(formData.get("student_id"));
   const amount = Number(formData.get("amount"));
   const reason = String(formData.get("reason") ?? "Payment received").trim();
@@ -456,7 +456,7 @@ export type TopicRow = {
 };
 
 export async function getTopics(): Promise<TopicRow[]> {
-  assertAdmin();
+  await assertAdmin();
   return (await sql`
     SELECT id, title, description, planned_at, is_covered
     FROM topics
@@ -465,7 +465,7 @@ export async function getTopics(): Promise<TopicRow[]> {
 }
 
 export async function createTopic(formData: FormData): Promise<{ error?: string }> {
-  assertAdmin();
+  await assertAdmin();
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
   const plannedAt = String(formData.get("planned_at") ?? "").trim();
@@ -480,13 +480,13 @@ export async function createTopic(formData: FormData): Promise<{ error?: string 
 }
 
 export async function setTopicCovered(id: number, covered: boolean): Promise<void> {
-  assertAdmin();
+  await assertAdmin();
   await sql`UPDATE topics SET is_covered = ${covered} WHERE id = ${id}`;
   revalidatePath("/admin");
 }
 
 export async function deleteTopic(id: number): Promise<void> {
-  assertAdmin();
+  await assertAdmin();
   await sql`DELETE FROM topics WHERE id = ${id}`;
   revalidatePath("/admin");
 }
@@ -516,7 +516,7 @@ export type AssignmentMatrix = {
 };
 
 export async function createAssignment(formData: FormData): Promise<{ error?: string }> {
-  assertAdmin();
+  await assertAdmin();
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
   const dueAt = String(formData.get("due_at") ?? "").trim();
@@ -534,7 +534,7 @@ export async function updateAssignment(
   id: number,
   formData: FormData
 ): Promise<{ error?: string }> {
-  assertAdmin();
+  await assertAdmin();
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
   const dueAt = String(formData.get("due_at") ?? "").trim();
@@ -556,7 +556,7 @@ export async function updateAssignment(
 }
 
 export async function deleteAssignment(id: number): Promise<{ error?: string }> {
-  assertAdmin();
+  await assertAdmin();
   try {
     // assignment_status rows cascade on delete (see schema), so removing the
     // assignment is enough.
@@ -571,7 +571,7 @@ export async function deleteAssignment(id: number): Promise<{ error?: string }> 
 }
 
 export async function getAssignmentMatrix(): Promise<AssignmentMatrix> {
-  assertAdmin();
+  await assertAdmin();
   const assignments = (await sql`
     SELECT id, title, description, due_at
     FROM assignments
@@ -599,7 +599,7 @@ export async function setAssignmentStatus(
   studentId: number,
   status: "done" | "pending"
 ): Promise<void> {
-  assertAdmin();
+  await assertAdmin();
   await sql`
     INSERT INTO assignment_status (assignment_id, student_id, status, updated_at)
     VALUES (${assignmentId}, ${studentId}, ${status}, now())
@@ -631,7 +631,7 @@ export type StudentDetail = {
 };
 
 export async function getStudentDetail(studentId: number): Promise<StudentDetail> {
-  assertAdmin();
+  await assertAdmin();
   const base = (await sql`
     SELECT s.id, s.name, s.email,
       COALESCE(
@@ -692,7 +692,7 @@ export async function updateLedgerEntry(
   id: number,
   formData: FormData
 ): Promise<{ error?: string }> {
-  assertAdmin();
+  await assertAdmin();
   const type = String(formData.get("type") ?? "").trim();
   const amount = Number(formData.get("amount"));
   const reason = String(formData.get("reason") ?? "").trim();
@@ -721,7 +721,7 @@ export async function updateLedgerEntry(
 
 /** Permanently delete a single fee/payment ledger entry. */
 export async function deleteLedgerEntry(id: number): Promise<{ error?: string }> {
-  assertAdmin();
+  await assertAdmin();
   try {
     await sql`DELETE FROM ledger WHERE id = ${id}`;
   } catch (e) {
@@ -731,4 +731,99 @@ export async function deleteLedgerEntry(id: number): Promise<{ error?: string }>
   }
   revalidatePath("/admin");
   return {};
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard stats (aggregates for the charts)
+// ---------------------------------------------------------------------------
+export type DashboardStats = {
+  students: { total: number; active: number; inactive: number };
+  money: { outstanding: number; penalties: number; payments: number };
+  attendance: { title: string; scheduled_at: string; present: number; absent: number }[];
+  assignments: { title: string; done: number; total: number }[];
+  topDebtors: { name: string; balance: number }[];
+};
+
+export async function getDashboardStats(): Promise<DashboardStats> {
+  await assertAdmin();
+
+  const studentRows = (await sql`
+    SELECT
+      COUNT(*) AS total,
+      COUNT(*) FILTER (WHERE status = 'active') AS active
+    FROM students
+  `) as { total: string; active: string }[];
+  const total = Number(studentRows[0]?.total ?? 0);
+  const active = Number(studentRows[0]?.active ?? 0);
+
+  const moneyRows = (await sql`
+    SELECT
+      COALESCE(SUM(amount) FILTER (WHERE type = 'penalty'), 0) AS penalties,
+      COALESCE(SUM(amount) FILTER (WHERE type = 'payment'), 0) AS payments
+    FROM ledger
+  `) as { penalties: string; payments: string }[];
+
+  const outstandingRows = (await sql`
+    SELECT COALESCE(SUM(CASE WHEN bal > 0 THEN bal ELSE 0 END), 0) AS outstanding
+    FROM (
+      SELECT student_id,
+        SUM(CASE WHEN type = 'penalty' THEN amount ELSE -amount END) AS bal
+      FROM ledger GROUP BY student_id
+    ) t
+  `) as { outstanding: string }[];
+
+  const attendanceRows = (await sql`
+    SELECT s.title, s.scheduled_at,
+      COUNT(*) FILTER (WHERE a.status = 'present') AS present,
+      COUNT(*) FILTER (WHERE a.status = 'absent') AS absent
+    FROM sessions s
+    LEFT JOIN attendance a ON a.session_id = s.id
+    GROUP BY s.id, s.title, s.scheduled_at
+    ORDER BY s.scheduled_at DESC
+    LIMIT 10
+  `) as { title: string; scheduled_at: string; present: string; absent: string }[];
+
+  const assignmentRows = (await sql`
+    SELECT a.title,
+      COUNT(st.id) FILTER (WHERE st.status = 'done') AS done
+    FROM assignments a
+    LEFT JOIN assignment_status st ON st.assignment_id = a.id
+    GROUP BY a.id, a.title
+    ORDER BY COALESCE(a.due_at, a.created_at) DESC
+    LIMIT 15
+  `) as { title: string; done: string }[];
+
+  const debtorRows = (await sql`
+    SELECT s.name,
+      SUM(CASE WHEN l.type = 'penalty' THEN l.amount ELSE -l.amount END) AS balance
+    FROM students s JOIN ledger l ON l.student_id = s.id
+    GROUP BY s.id, s.name
+    HAVING SUM(CASE WHEN l.type = 'penalty' THEN l.amount ELSE -l.amount END) > 0
+    ORDER BY balance DESC
+    LIMIT 5
+  `) as { name: string; balance: string }[];
+
+  return {
+    students: { total, active, inactive: Math.max(0, total - active) },
+    money: {
+      outstanding: Number(outstandingRows[0]?.outstanding ?? 0),
+      penalties: Number(moneyRows[0]?.penalties ?? 0),
+      payments: Number(moneyRows[0]?.payments ?? 0),
+    },
+    // Reverse to chronological order for the trend chart.
+    attendance: attendanceRows
+      .map((r) => ({
+        title: r.title,
+        scheduled_at: r.scheduled_at,
+        present: Number(r.present),
+        absent: Number(r.absent),
+      }))
+      .reverse(),
+    assignments: assignmentRows.map((r) => ({
+      title: r.title,
+      done: Number(r.done),
+      total: active,
+    })),
+    topDebtors: debtorRows.map((r) => ({ name: r.name, balance: Number(r.balance) })),
+  };
 }

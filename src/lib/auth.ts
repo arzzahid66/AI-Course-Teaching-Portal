@@ -50,8 +50,8 @@ export function checkAdminEmail(candidate: string): boolean {
 }
 
 /** Set the httpOnly admin cookie after a successful login. */
-export function setAdminCookie(): void {
-  cookies().set(ADMIN_COOKIE, adminSessionToken(), {
+export async function setAdminCookie(): Promise<void> {
+  (await cookies()).set(ADMIN_COOKIE, adminSessionToken(), {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
@@ -60,20 +60,20 @@ export function setAdminCookie(): void {
   });
 }
 
-export function clearAdminCookie(): void {
-  cookies().delete(ADMIN_COOKIE);
+export async function clearAdminCookie(): Promise<void> {
+  (await cookies()).delete(ADMIN_COOKIE);
 }
 
 /** Read the cookie and verify it matches the current password's token. */
-export function isAdmin(): boolean {
-  const value = cookies().get(ADMIN_COOKIE)?.value;
+export async function isAdmin(): Promise<boolean> {
+  const value = (await cookies()).get(ADMIN_COOKIE)?.value;
   if (!value) return false;
   return safeEqual(value, adminSessionToken());
 }
 
 /** Throw if the caller is not an authenticated admin. Call inside every admin action. */
-export function assertAdmin(): void {
-  if (!isAdmin()) {
+export async function assertAdmin(): Promise<void> {
+  if (!(await isAdmin())) {
     throw new Error("Not authorized");
   }
 }
@@ -122,9 +122,9 @@ function signStudentId(id: number): string {
     .digest("hex");
 }
 
-export function setStudentCookie(id: number): void {
+export async function setStudentCookie(id: number): Promise<void> {
   const value = `${id}.${signStudentId(id)}`;
-  cookies().set(STUDENT_COOKIE, value, {
+  (await cookies()).set(STUDENT_COOKIE, value, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
@@ -133,13 +133,13 @@ export function setStudentCookie(id: number): void {
   });
 }
 
-export function clearStudentCookie(): void {
-  cookies().delete(STUDENT_COOKIE);
+export async function clearStudentCookie(): Promise<void> {
+  (await cookies()).delete(STUDENT_COOKIE);
 }
 
 /** Read + verify the student cookie. Returns the student id or null. */
-export function getStudentSession(): number | null {
-  const value = cookies().get(STUDENT_COOKIE)?.value;
+export async function getStudentSession(): Promise<number | null> {
+  const value = (await cookies()).get(STUDENT_COOKIE)?.value;
   if (!value) return null;
   const dot = value.lastIndexOf(".");
   if (dot <= 0) return null;
@@ -153,8 +153,8 @@ export function getStudentSession(): number | null {
 }
 
 /** Throw if no student is logged in; otherwise return the student id. */
-export function requireStudentId(): number {
-  const id = getStudentSession();
+export async function requireStudentId(): Promise<number> {
+  const id = await getStudentSession();
   if (id === null) throw new Error("Not logged in");
   return id;
 }

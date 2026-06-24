@@ -26,6 +26,7 @@ import {
   getStudentDetail,
   updateLedgerEntry,
   deleteLedgerEntry,
+  getDashboardStats,
   adminLogout,
   type StudentRow,
   type SessionRow,
@@ -33,10 +34,24 @@ import {
   type TopicRow,
   type AssignmentMatrix,
   type AssignmentRow,
+  type AssignmentStudent,
   type StudentDetail,
+  type DashboardStats,
 } from "@/actions/admin";
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+  PieChart,
+  Pie,
+  Cell,
+} from "recharts";
 
-type Tab = "students" | "sessions" | "payments" | "topics" | "assignments";
+type Tab = "dashboard" | "students" | "sessions" | "payments" | "topics" | "assignments";
 
 export default function AdminDashboard({
   students,
@@ -53,10 +68,11 @@ export default function AdminDashboard({
   topics: TopicRow[];
   assignmentMatrix: AssignmentMatrix;
 }) {
-  const [tab, setTab] = useState<Tab>("students");
+  const [tab, setTab] = useState<Tab>("dashboard");
   const router = useRouter();
 
   const tabs: [Tab, string][] = [
+    ["dashboard", "Dashboard"],
     ["students", "Students"],
     ["sessions", "Sessions"],
     ["payments", "Payments"],
@@ -90,6 +106,7 @@ export default function AdminDashboard({
         ))}
       </nav>
 
+      {tab === "dashboard" && <DashboardTab />}
       {tab === "students" && <StudentsTab students={students} />}
       {tab === "sessions" && (
         <SessionsTab openSession={openSession} attendees={attendees} sessions={sessions} />
@@ -128,6 +145,172 @@ function toDatetimeLocal(d: string | null): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
     date.getHours()
   )}:${pad(date.getMinutes())}`;
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+function StatCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "rose" | "emerald" | "brand";
+}) {
+  const color =
+    tone === "rose"
+      ? "text-rose-600"
+      : tone === "emerald"
+      ? "text-emerald-600"
+      : tone === "brand"
+      ? "text-brand-700"
+      : "text-slate-800";
+  return (
+    <div className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-100 p-4">
+      <p className="text-slate-500 text-xs">{label}</p>
+      <p className={`text-xl sm:text-2xl font-bold ${color}`}>{value}</p>
+    </div>
+  );
+}
+
+function DashboardTab() {
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getDashboardStats()
+      .then(setStats)
+      .catch((e) => setError(e instanceof Error ? e.message : "Could not load stats."));
+  }, []);
+
+  if (error) {
+    return (
+      <Card>
+        <p className="text-rose-600 text-sm">{error}</p>
+      </Card>
+    );
+  }
+  if (!stats) {
+    return (
+      <Card>
+        <p className="text-slate-400 text-sm">Loading dashboard…</p>
+      </Card>
+    );
+  }
+
+  const statusData = [
+    { name: "Active", value: stats.students.active },
+    { name: "Inactive", value: stats.students.inactive },
+  ];
+  const STATUS_COLORS = ["#10b981", "#cbd5e1"];
+
+  const attendanceData = stats.attendance.map((s) => ({
+    name: new Date(s.scheduled_at).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    }),
+    Present: s.present,
+    Absent: s.absent,
+  }));
+
+  const assignmentData = stats.assignments.map((a) => ({
+    name: a.title.length > 14 ? a.title.slice(0, 13) + "…" : a.title,
+    Done: a.done,
+    Pending: Math.max(0, a.total - a.done),
+  }));
+
+  return (
+    <>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+        <StatCard label="Students" value={String(stats.students.total)} tone="brand" />
+        <StatCard label="Outstanding" value={`Rs ${stats.money.outstanding}`} tone="rose" />
+        <StatCard label="Collected" value={`Rs ${stats.money.payments}`} tone="emerald" />
+        <StatCard label="Charged" value={`Rs ${stats.money.penalties}`} />
+      </div>
+
+      <Card>
+        <h2 className="font-bold mb-3">Attendance — recent classes</h2>
+        {attendanceData.length === 0 ? (
+          <p className="text-slate-400 text-sm">No sessions yet.</p>
+        ) : (
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={attendanceData}>
+              <XAxis dataKey="name" fontSize={11} />
+              <YAxis allowDecimals={false} fontSize={11} width={28} />
+              <Tooltip />
+              <Legend />
+              <Bar dataKey="Present" stackId="a" fill="#10b981" />
+              <Bar dataKey="Absent" stackId="a" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </Card>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Card>
+          <h2 className="font-bold mb-3">Student status</h2>
+          {stats.students.total === 0 ? (
+            <p className="text-slate-400 text-sm">No students.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie
+                  data={statusData}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius={50}
+                  outerRadius={80}
+                  paddingAngle={2}
+                >
+                  {statusData.map((_, i) => (
+                    <Cell key={i} fill={STATUS_COLORS[i]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </Card>
+
+        <Card>
+          <h2 className="font-bold mb-3">Top dues</h2>
+          {stats.topDebtors.length === 0 ? (
+            <p className="text-slate-400 text-sm">Everyone is clear 🎉</p>
+          ) : (
+            <ul className="divide-y text-sm">
+              {stats.topDebtors.map((d, i) => (
+                <li key={i} className="flex justify-between py-2">
+                  <span className="truncate">{d.name}</span>
+                  <span className="text-rose-600 font-semibold shrink-0">Rs {d.balance}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      </div>
+
+      <Card>
+        <h2 className="font-bold mb-3">Task completion</h2>
+        {assignmentData.length === 0 ? (
+          <p className="text-slate-400 text-sm">No assignments yet.</p>
+        ) : (
+          <ResponsiveContainer width="100%" height={Math.max(160, assignmentData.length * 46)}>
+            <BarChart data={assignmentData} layout="vertical" margin={{ left: 8, right: 8 }}>
+              <XAxis type="number" allowDecimals={false} fontSize={11} />
+              <YAxis type="category" dataKey="name" width={96} fontSize={11} />
+              <Tooltip />
+              <Legend />
+              <Bar dataKey="Done" stackId="b" fill="#10b981" />
+              <Bar dataKey="Pending" stackId="b" fill="#cbd5e1" radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </Card>
+    </>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1329,22 +1512,144 @@ function TopicsTab({ topics }: { topics: TopicRow[] }) {
 // ---------------------------------------------------------------------------
 // Assignments (matrix: students × assignments)
 // ---------------------------------------------------------------------------
+function AssignmentManageItem({
+  assignment,
+  students,
+  done,
+  pending,
+  onToggleStudent,
+  onEdit,
+  onDelete,
+}: {
+  assignment: AssignmentRow;
+  students: AssignmentStudent[];
+  done: Record<string, boolean>;
+  pending: boolean;
+  onToggleStudent: (assignmentId: number, studentId: number, isDone: boolean) => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const a = assignment;
+
+  const doneCount = students.filter((s) => done[`${a.id}:${s.id}`]).length;
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? students.filter(
+        (s) =>
+          s.name.toLowerCase().includes(q) || (s.email ?? "").toLowerCase().includes(q)
+      )
+    : students;
+
+  return (
+    <li className="py-2">
+      <div className="flex items-start justify-between gap-2">
+        <button
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="flex items-start gap-2 min-w-0 text-left"
+        >
+          <span
+            className={`mt-0.5 text-slate-400 transition-transform ${open ? "rotate-90" : ""}`}
+          >
+            ▶
+          </span>
+          <span className="min-w-0">
+            <span className="font-medium block truncate">{a.title}</span>
+            <span className="text-slate-400 text-xs">
+              {doneCount}/{students.length} done
+              {a.due_at ? ` · Due ${fmt(a.due_at)}` : ""}
+            </span>
+          </span>
+        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={onEdit}
+            className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1"
+          >
+            View / Edit
+          </button>
+          <button
+            onClick={onDelete}
+            disabled={pending}
+            className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1 disabled:opacity-50"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+
+      {open && (
+        <div className="mt-2 ml-6 rounded-xl bg-slate-50 p-2">
+          {students.length === 0 ? (
+            <p className="text-slate-400 py-1 px-1">No active students.</p>
+          ) : (
+            <>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search name or email…"
+                className="w-full mb-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none"
+              />
+              {q && (
+                <p className="text-xs text-slate-400 mb-1 px-0.5">
+                  Showing {filtered.length} of {students.length}
+                </p>
+              )}
+              {filtered.length === 0 ? (
+                <p className="text-slate-400 text-sm py-1 px-1">No match.</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                  {filtered.map((s) => {
+                    const isDone = !!done[`${a.id}:${s.id}`];
+                    return (
+                      <label
+                        key={s.id}
+                        className={`flex items-start gap-2 cursor-pointer rounded-lg px-2 py-1.5 border ${
+                          isDone ? "bg-emerald-50 border-emerald-100" : "bg-white border-slate-100"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isDone}
+                          disabled={pending}
+                          onChange={() => onToggleStudent(a.id, s.id, isDone)}
+                          className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                        />
+                        <span className="min-w-0">
+                          <span
+                            className={`block font-medium truncate ${
+                              isDone ? "text-slate-900" : "text-slate-700"
+                            }`}
+                          >
+                            {s.name}
+                          </span>
+                          <span className="block text-xs text-slate-400 truncate">
+                            {s.email || "no email"}
+                            {" · "}
+                            {s.whatsapp || "no WhatsApp"}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
 function AssignmentsTab({ matrix }: { matrix: AssignmentMatrix }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<AssignmentRow | null>(null);
-  const [open, setOpen] = useState<Set<number>>(() => new Set());
   const formRef = useRef<HTMLFormElement>(null);
-
-  function toggleOpen(id: number) {
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
 
   function onToggleStudent(assignmentId: number, studentId: number, isDone: boolean) {
     start(async () => {
@@ -1412,89 +1717,18 @@ function AssignmentsTab({ matrix }: { matrix: AssignmentMatrix }) {
       <Card>
         <h2 className="font-bold mb-3">Assignments ({assignments.length})</h2>
         <ul className="divide-y text-sm">
-          {assignments.map((a) => {
-            const isOpen = open.has(a.id);
-            const doneCount = students.filter((s) => done[`${a.id}:${s.id}`]).length;
-            return (
-              <li key={a.id} className="py-2">
-                <div className="flex items-start justify-between gap-2">
-                  <button
-                    onClick={() => toggleOpen(a.id)}
-                    className="flex items-start gap-2 min-w-0 text-left"
-                    aria-expanded={isOpen}
-                  >
-                    <span
-                      className={`mt-0.5 text-slate-400 transition-transform ${
-                        isOpen ? "rotate-90" : ""
-                      }`}
-                    >
-                      ▶
-                    </span>
-                    <span className="min-w-0">
-                      <span className="font-medium block truncate">{a.title}</span>
-                      <span className="text-slate-400 text-xs">
-                        {doneCount}/{students.length} done
-                        {a.due_at ? ` · Due ${fmt(a.due_at)}` : ""}
-                      </span>
-                    </span>
-                  </button>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={() => setEditing(a)}
-                      className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1"
-                    >
-                      View / Edit
-                    </button>
-                    <button
-                      onClick={() => onDelete(a)}
-                      disabled={pending}
-                      className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1 disabled:opacity-50"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-
-                {isOpen && (
-                  <ul className="mt-2 ml-6 rounded-xl bg-slate-50 p-2 divide-y divide-slate-100">
-                    {students.length === 0 && (
-                      <li className="text-slate-400 py-1 px-1">No active students.</li>
-                    )}
-                    {students.map((s) => {
-                      const isDone = !!done[`${a.id}:${s.id}`];
-                      return (
-                        <li key={s.id} className="py-1.5 px-1">
-                          <label className="flex items-start gap-2 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={isDone}
-                              disabled={pending}
-                              onChange={() => onToggleStudent(a.id, s.id, isDone)}
-                              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
-                            />
-                            <span className="min-w-0">
-                              <span
-                                className={`block font-medium ${
-                                  isDone ? "text-slate-900" : "text-slate-700"
-                                }`}
-                              >
-                                {s.name}
-                              </span>
-                              <span className="block text-xs text-slate-400 break-all">
-                                {s.email || "no email"}
-                                {" · "}
-                                {s.whatsapp || "no WhatsApp"}
-                              </span>
-                            </span>
-                          </label>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </li>
-            );
-          })}
+          {assignments.map((a) => (
+            <AssignmentManageItem
+              key={a.id}
+              assignment={a}
+              students={students}
+              done={done}
+              pending={pending}
+              onToggleStudent={onToggleStudent}
+              onEdit={() => setEditing(a)}
+              onDelete={() => onDelete(a)}
+            />
+          ))}
           {assignments.length === 0 && (
             <li className="py-4 text-center text-slate-400">No assignments yet.</li>
           )}
