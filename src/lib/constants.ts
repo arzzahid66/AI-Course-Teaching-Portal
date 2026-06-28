@@ -38,7 +38,7 @@ export const TUTOR_WHATSAPP_NUMBER = "923487356003";
  * YouTube URL (e.g. https://www.youtube.com/watch?v=ZCAB_ysVb98 -> ZCAB_ysVb98).
  * Set to "" to hide the demo card entirely.
  */
-export const PORTAL_DEMO_YOUTUBE_ID = "ZCAB_ysVb98";
+export const PORTAL_DEMO_YOUTUBE_ID = "NTJbSGlWEkM";
 
 /** Name of the httpOnly admin session cookie. */
 export const ADMIN_COOKIE = "classgate_admin";
