@@ -744,64 +744,121 @@ export type DashboardStats = {
   topDebtors: { name: string; balance: number }[];
 };
 
+/** A fully-zeroed stats object — what the dashboard falls back to on any error. */
+function emptyDashboardStats(): DashboardStats {
+  return {
+    students: { total: 0, active: 0, inactive: 0 },
+    money: { outstanding: 0, penalties: 0, payments: 0 },
+    attendance: [],
+    assignments: [],
+    topDebtors: [],
+  };
+}
+
+/**
+ * Run a single dashboard query and never throw: on any error (e.g. a missing
+ * table on a half-migrated database, or a transient connection drop) we log it
+ * server-side and return `fallback` so one bad query can't take down the whole
+ * dashboard render. This is what keeps the page from showing the opaque
+ * "An error occurred in the Server Components render" message in production.
+ */
+async function safeQuery<T>(label: string, run: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await run();
+  } catch (e) {
+    console.error(`[dashboard] ${label} query failed:`, e);
+    return fallback;
+  }
+}
+
 export async function getDashboardStats(): Promise<DashboardStats> {
   await assertAdmin();
 
-  const studentRows = (await sql`
-    SELECT
-      COUNT(*) AS total,
-      COUNT(*) FILTER (WHERE status = 'active') AS active
-    FROM students
-  `) as { total: string; active: string }[];
+  const studentRows = await safeQuery(
+    "students",
+    async () =>
+      (await sql`
+        SELECT
+          COUNT(*) AS total,
+          COUNT(*) FILTER (WHERE status = 'active') AS active
+        FROM students
+      `) as { total: string; active: string }[],
+    [] as { total: string; active: string }[]
+  );
   const total = Number(studentRows[0]?.total ?? 0);
   const active = Number(studentRows[0]?.active ?? 0);
 
-  const moneyRows = (await sql`
-    SELECT
-      COALESCE(SUM(amount) FILTER (WHERE type = 'penalty'), 0) AS penalties,
-      COALESCE(SUM(amount) FILTER (WHERE type = 'payment'), 0) AS payments
-    FROM ledger
-  `) as { penalties: string; payments: string }[];
+  const moneyRows = await safeQuery(
+    "money",
+    async () =>
+      (await sql`
+        SELECT
+          COALESCE(SUM(amount) FILTER (WHERE type = 'penalty'), 0) AS penalties,
+          COALESCE(SUM(amount) FILTER (WHERE type = 'payment'), 0) AS payments
+        FROM ledger
+      `) as { penalties: string; payments: string }[],
+    [] as { penalties: string; payments: string }[]
+  );
 
-  const outstandingRows = (await sql`
-    SELECT COALESCE(SUM(CASE WHEN bal > 0 THEN bal ELSE 0 END), 0) AS outstanding
-    FROM (
-      SELECT student_id,
-        SUM(CASE WHEN type = 'penalty' THEN amount ELSE -amount END) AS bal
-      FROM ledger GROUP BY student_id
-    ) t
-  `) as { outstanding: string }[];
+  const outstandingRows = await safeQuery(
+    "outstanding",
+    async () =>
+      (await sql`
+        SELECT COALESCE(SUM(CASE WHEN bal > 0 THEN bal ELSE 0 END), 0) AS outstanding
+        FROM (
+          SELECT student_id,
+            SUM(CASE WHEN type = 'penalty' THEN amount ELSE -amount END) AS bal
+          FROM ledger GROUP BY student_id
+        ) t
+      `) as { outstanding: string }[],
+    [] as { outstanding: string }[]
+  );
 
-  const attendanceRows = (await sql`
-    SELECT s.title, s.scheduled_at,
-      COUNT(*) FILTER (WHERE a.status = 'present') AS present,
-      COUNT(*) FILTER (WHERE a.status = 'absent') AS absent
-    FROM sessions s
-    LEFT JOIN attendance a ON a.session_id = s.id
-    GROUP BY s.id, s.title, s.scheduled_at
-    ORDER BY s.scheduled_at DESC
-    LIMIT 10
-  `) as { title: string; scheduled_at: string; present: string; absent: string }[];
+  const attendanceRows = await safeQuery(
+    "attendance",
+    async () =>
+      (await sql`
+        SELECT s.title, s.scheduled_at,
+          COUNT(*) FILTER (WHERE a.status = 'present') AS present,
+          COUNT(*) FILTER (WHERE a.status = 'absent') AS absent
+        FROM sessions s
+        LEFT JOIN attendance a ON a.session_id = s.id
+        GROUP BY s.id, s.title, s.scheduled_at
+        ORDER BY s.scheduled_at DESC
+        LIMIT 10
+      `) as { title: string; scheduled_at: string; present: string; absent: string }[],
+    [] as { title: string; scheduled_at: string; present: string; absent: string }[]
+  );
 
-  const assignmentRows = (await sql`
-    SELECT a.title,
-      COUNT(st.id) FILTER (WHERE st.status = 'done') AS done
-    FROM assignments a
-    LEFT JOIN assignment_status st ON st.assignment_id = a.id
-    GROUP BY a.id, a.title
-    ORDER BY COALESCE(a.due_at, a.created_at) DESC
-    LIMIT 15
-  `) as { title: string; done: string }[];
+  const assignmentRows = await safeQuery(
+    "assignments",
+    async () =>
+      (await sql`
+        SELECT a.title,
+          COUNT(st.id) FILTER (WHERE st.status = 'done') AS done
+        FROM assignments a
+        LEFT JOIN assignment_status st ON st.assignment_id = a.id
+        GROUP BY a.id, a.title
+        ORDER BY COALESCE(a.due_at, a.created_at) DESC
+        LIMIT 15
+      `) as { title: string; done: string }[],
+    [] as { title: string; done: string }[]
+  );
 
-  const debtorRows = (await sql`
-    SELECT s.name,
-      SUM(CASE WHEN l.type = 'penalty' THEN l.amount ELSE -l.amount END) AS balance
-    FROM students s JOIN ledger l ON l.student_id = s.id
-    GROUP BY s.id, s.name
-    HAVING SUM(CASE WHEN l.type = 'penalty' THEN l.amount ELSE -l.amount END) > 0
-    ORDER BY balance DESC
-    LIMIT 5
-  `) as { name: string; balance: string }[];
+  const debtorRows = await safeQuery(
+    "debtors",
+    async () =>
+      (await sql`
+        SELECT s.name,
+          SUM(CASE WHEN l.type = 'penalty' THEN l.amount ELSE -l.amount END) AS balance
+        FROM students s JOIN ledger l ON l.student_id = s.id
+        GROUP BY s.id, s.name
+        HAVING SUM(CASE WHEN l.type = 'penalty' THEN l.amount ELSE -l.amount END) > 0
+        ORDER BY balance DESC
+        LIMIT 5
+      `) as { name: string; balance: string }[],
+    [] as { name: string; balance: string }[]
+  );
 
   return {
     students: { total, active, inactive: Math.max(0, total - active) },

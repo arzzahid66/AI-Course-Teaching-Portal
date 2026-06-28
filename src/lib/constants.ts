@@ -20,7 +20,7 @@ export const CHECKIN_WINDOW_MIN = 30;
 // ---------------------------------------------------------------------------
 
 /** EasyPaisa account number students send their missed-class fee to. */
-export const PAYMENT_EASYPAISA_NUMBER = "03487356003";
+export const PAYMENT_EASYPAISA_NUMBER = "03487356993";
 
 /** Account holder name shown next to the EasyPaisa number (optional). */
 export const PAYMENT_ACCOUNT_NAME = "";

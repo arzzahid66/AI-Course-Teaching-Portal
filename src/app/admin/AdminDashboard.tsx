@@ -26,7 +26,6 @@ import {
   getStudentDetail,
   updateLedgerEntry,
   deleteLedgerEntry,
-  getDashboardStats,
   adminLogout,
   type StudentRow,
   type SessionRow,
@@ -44,6 +43,7 @@ import {
   Bar,
   XAxis,
   YAxis,
+  CartesianGrid,
   Tooltip,
   Legend,
   PieChart,
@@ -60,6 +60,7 @@ export default function AdminDashboard({
   sessions,
   topics,
   assignmentMatrix,
+  dashboardStats,
 }: {
   students: StudentRow[];
   openSession: SessionRow | null;
@@ -67,6 +68,7 @@ export default function AdminDashboard({
   sessions: SessionRow[];
   topics: TopicRow[];
   assignmentMatrix: AssignmentMatrix;
+  dashboardStats: DashboardStats;
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
   const router = useRouter();
@@ -106,7 +108,7 @@ export default function AdminDashboard({
         ))}
       </nav>
 
-      {tab === "dashboard" && <DashboardTab />}
+      {tab === "dashboard" && <DashboardTab stats={dashboardStats} />}
       {tab === "students" && <StudentsTab students={students} />}
       {tab === "sessions" && (
         <SessionsTab openSession={openSession} attendees={attendees} sessions={sessions} />
@@ -153,67 +155,97 @@ function toDatetimeLocal(d: string | null): string {
 function StatCard({
   label,
   value,
-  tone,
+  hint,
+  tone = "slate",
+  icon,
 }: {
   label: string;
   value: string;
-  tone?: "rose" | "emerald" | "brand";
+  hint?: string;
+  tone?: "rose" | "emerald" | "brand" | "slate" | "amber";
+  icon?: string;
 }) {
-  const color =
-    tone === "rose"
-      ? "text-rose-600"
-      : tone === "emerald"
-      ? "text-emerald-600"
-      : tone === "brand"
-      ? "text-brand-700"
-      : "text-slate-800";
+  const tones: Record<string, { value: string; chip: string }> = {
+    rose: { value: "text-rose-600", chip: "bg-rose-50 text-rose-600" },
+    emerald: { value: "text-emerald-600", chip: "bg-emerald-50 text-emerald-600" },
+    brand: { value: "text-brand-700", chip: "bg-brand-50 text-brand-700" },
+    amber: { value: "text-amber-600", chip: "bg-amber-50 text-amber-600" },
+    slate: { value: "text-slate-800", chip: "bg-slate-100 text-slate-600" },
+  };
+  const t = tones[tone];
   return (
-    <div className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-100 p-4">
-      <p className="text-slate-500 text-xs">{label}</p>
-      <p className={`text-xl sm:text-2xl font-bold ${color}`}>{value}</p>
+    <div className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-100 p-4 flex flex-col gap-1">
+      <div className="flex items-center justify-between">
+        <p className="text-slate-500 text-xs font-medium">{label}</p>
+        {icon && (
+          <span className={`h-7 w-7 grid place-items-center rounded-lg text-sm ${t.chip}`}>
+            {icon}
+          </span>
+        )}
+      </div>
+      <p className={`text-xl sm:text-2xl font-bold leading-tight ${t.value}`}>{value}</p>
+      {hint && <p className="text-slate-400 text-xs">{hint}</p>}
     </div>
   );
 }
 
-function DashboardTab() {
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [error, setError] = useState<string | null>(null);
+/** Small horizontal "X of Y" progress bar used in the Top dues / tasks lists. */
+function MiniBar({ pct, tone }: { pct: number; tone: string }) {
+  return (
+    <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+      <div
+        className={`h-full rounded-full ${tone}`}
+        style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
+      />
+    </div>
+  );
+}
 
-  useEffect(() => {
-    getDashboardStats()
-      .then(setStats)
-      .catch((e) => setError(e instanceof Error ? e.message : "Could not load stats."));
-  }, []);
+function ChartTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: { name: string; value: number; color: string }[];
+  label?: string;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  return (
+    <div className="rounded-xl bg-white shadow-lg ring-1 ring-slate-200 px-3 py-2 text-xs">
+      {label && <p className="font-semibold text-slate-700 mb-1">{label}</p>}
+      {payload.map((p) => (
+        <p key={p.name} className="flex items-center gap-2 text-slate-600">
+          <span className="h-2 w-2 rounded-full" style={{ background: p.color }} />
+          {p.name}: <span className="font-semibold">{p.value}</span>
+        </p>
+      ))}
+    </div>
+  );
+}
 
-  if (error) {
-    return (
-      <Card>
-        <p className="text-rose-600 text-sm">{error}</p>
-      </Card>
-    );
-  }
-  if (!stats) {
-    return (
-      <Card>
-        <p className="text-slate-400 text-sm">Loading dashboard…</p>
-      </Card>
-    );
-  }
-
+function DashboardTab({ stats }: { stats: DashboardStats }) {
   const statusData = [
     { name: "Active", value: stats.students.active },
     { name: "Inactive", value: stats.students.inactive },
   ];
   const STATUS_COLORS = ["#10b981", "#cbd5e1"];
 
-  const attendanceData = stats.attendance.map((s) => ({
-    name: new Date(s.scheduled_at).toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-    }),
-    Present: s.present,
-    Absent: s.absent,
-  }));
+  const attendanceData = stats.attendance.map((s) => {
+    const d = new Date(s.scheduled_at);
+    return {
+      name: Number.isNaN(d.getTime())
+        ? "—"
+        : d.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      Present: s.present,
+      Absent: s.absent,
+    };
+  });
+
+  // Overall attendance rate across the recent classes shown.
+  const totalPresent = stats.attendance.reduce((n, s) => n + s.present, 0);
+  const totalMarked = stats.attendance.reduce((n, s) => n + s.present + s.absent, 0);
+  const attendanceRate = totalMarked > 0 ? Math.round((totalPresent / totalMarked) * 100) : null;
 
   const assignmentData = stats.assignments.map((a) => ({
     name: a.title.length > 14 ? a.title.slice(0, 13) + "…" : a.title,
@@ -221,70 +253,129 @@ function DashboardTab() {
     Pending: Math.max(0, a.total - a.done),
   }));
 
+  const maxDebt = Math.max(1, ...stats.topDebtors.map((d) => d.balance));
+
   return (
-    <>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-        <StatCard label="Students" value={String(stats.students.total)} tone="brand" />
-        <StatCard label="Outstanding" value={`Rs ${stats.money.outstanding}`} tone="rose" />
-        <StatCard label="Collected" value={`Rs ${stats.money.payments}`} tone="emerald" />
-        <StatCard label="Charged" value={`Rs ${stats.money.penalties}`} />
+    <div className="space-y-4">
+      {/* KPI row */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard
+          label="Students"
+          value={String(stats.students.total)}
+          hint={`${stats.students.active} active · ${stats.students.inactive} inactive`}
+          tone="brand"
+          icon="👥"
+        />
+        <StatCard
+          label="Attendance"
+          value={attendanceRate === null ? "—" : `${attendanceRate}%`}
+          hint={
+            attendanceRate === null
+              ? "No classes marked yet"
+              : `${totalPresent} present of ${totalMarked}`
+          }
+          tone="emerald"
+          icon="📈"
+        />
+        <StatCard
+          label="Outstanding"
+          value={`Rs ${stats.money.outstanding.toLocaleString()}`}
+          hint="Dues not yet paid"
+          tone="rose"
+          icon="⏳"
+        />
+        <StatCard
+          label="Collected"
+          value={`Rs ${stats.money.payments.toLocaleString()}`}
+          hint={`Rs ${stats.money.penalties.toLocaleString()} charged`}
+          tone="slate"
+          icon="💰"
+        />
       </div>
 
+      {/* Attendance trend */}
       <Card>
-        <h2 className="font-bold mb-3">Attendance — recent classes</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-bold">Attendance — recent classes</h2>
+          {attendanceRate !== null && (
+            <span className="text-xs rounded-full bg-emerald-50 text-emerald-700 px-2.5 py-1 font-semibold">
+              {attendanceRate}% present
+            </span>
+          )}
+        </div>
         {attendanceData.length === 0 ? (
-          <p className="text-slate-400 text-sm">No sessions yet.</p>
+          <EmptyChart label="No sessions yet." />
         ) : (
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={attendanceData}>
-              <XAxis dataKey="name" fontSize={11} />
-              <YAxis allowDecimals={false} fontSize={11} width={28} />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="Present" stackId="a" fill="#10b981" />
-              <Bar dataKey="Absent" stackId="a" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={attendanceData} margin={{ top: 4, right: 4, left: -16, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+              <XAxis dataKey="name" fontSize={11} tickLine={false} axisLine={false} />
+              <YAxis allowDecimals={false} fontSize={11} tickLine={false} axisLine={false} />
+              <Tooltip content={<ChartTooltip />} cursor={{ fill: "#f8fafc" }} />
+              <Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="Present" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} maxBarSize={48} />
+              <Bar dataKey="Absent" stackId="a" fill="#f43f5e" radius={[6, 6, 0, 0]} maxBarSize={48} />
             </BarChart>
           </ResponsiveContainer>
         )}
       </Card>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Student status donut */}
         <Card>
           <h2 className="font-bold mb-3">Student status</h2>
           {stats.students.total === 0 ? (
-            <p className="text-slate-400 text-sm">No students.</p>
+            <EmptyChart label="No students yet." />
           ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <PieChart>
-                <Pie
-                  data={statusData}
-                  dataKey="value"
-                  nameKey="name"
-                  innerRadius={50}
-                  outerRadius={80}
-                  paddingAngle={2}
-                >
-                  {statusData.map((_, i) => (
-                    <Cell key={i} fill={STATUS_COLORS[i]} />
-                  ))}
-                </Pie>
-                <Tooltip />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
+            <div className="relative">
+              <ResponsiveContainer width="100%" height={220}>
+                <PieChart>
+                  <Pie
+                    data={statusData}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={58}
+                    outerRadius={84}
+                    paddingAngle={2}
+                    stroke="none"
+                  >
+                    {statusData.map((_, i) => (
+                      <Cell key={i} fill={STATUS_COLORS[i]} />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<ChartTooltip />} />
+                  <Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center -translate-y-3">
+                <span className="text-2xl font-bold text-slate-800">{stats.students.total}</span>
+                <span className="text-xs text-slate-400">students</span>
+              </div>
+            </div>
           )}
         </Card>
 
+        {/* Top dues */}
         <Card>
           <h2 className="font-bold mb-3">Top dues</h2>
           {stats.topDebtors.length === 0 ? (
-            <p className="text-slate-400 text-sm">Everyone is clear 🎉</p>
+            <div className="grid place-items-center h-[200px] text-center">
+              <div>
+                <p className="text-3xl mb-1">🎉</p>
+                <p className="text-slate-400 text-sm">Everyone is clear.</p>
+              </div>
+            </div>
           ) : (
-            <ul className="divide-y text-sm">
+            <ul className="space-y-3">
               {stats.topDebtors.map((d, i) => (
-                <li key={i} className="flex justify-between py-2">
-                  <span className="truncate">{d.name}</span>
-                  <span className="text-rose-600 font-semibold shrink-0">Rs {d.balance}</span>
+                <li key={i} className="space-y-1.5">
+                  <div className="flex justify-between text-sm">
+                    <span className="truncate font-medium text-slate-700">{d.name}</span>
+                    <span className="text-rose-600 font-semibold shrink-0">
+                      Rs {d.balance.toLocaleString()}
+                    </span>
+                  </div>
+                  <MiniBar pct={(d.balance / maxDebt) * 100} tone="bg-rose-500" />
                 </li>
               ))}
             </ul>
@@ -292,24 +383,39 @@ function DashboardTab() {
         </Card>
       </div>
 
+      {/* Task completion */}
       <Card>
         <h2 className="font-bold mb-3">Task completion</h2>
         {assignmentData.length === 0 ? (
-          <p className="text-slate-400 text-sm">No assignments yet.</p>
+          <EmptyChart label="No assignments yet." />
         ) : (
           <ResponsiveContainer width="100%" height={Math.max(160, assignmentData.length * 46)}>
-            <BarChart data={assignmentData} layout="vertical" margin={{ left: 8, right: 8 }}>
-              <XAxis type="number" allowDecimals={false} fontSize={11} />
-              <YAxis type="category" dataKey="name" width={96} fontSize={11} />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="Done" stackId="b" fill="#10b981" />
-              <Bar dataKey="Pending" stackId="b" fill="#cbd5e1" radius={[0, 4, 4, 0]} />
+            <BarChart
+              data={assignmentData}
+              layout="vertical"
+              margin={{ top: 0, left: 8, right: 8, bottom: 0 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+              <XAxis type="number" allowDecimals={false} fontSize={11} tickLine={false} axisLine={false} />
+              <YAxis type="category" dataKey="name" width={100} fontSize={11} tickLine={false} axisLine={false} />
+              <Tooltip content={<ChartTooltip />} cursor={{ fill: "#f8fafc" }} />
+              <Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="Done" stackId="b" fill="#10b981" maxBarSize={26} />
+              <Bar dataKey="Pending" stackId="b" fill="#e2e8f0" radius={[0, 6, 6, 0]} maxBarSize={26} />
             </BarChart>
           </ResponsiveContainer>
         )}
       </Card>
-    </>
+    </div>
+  );
+}
+
+/** Centered placeholder shown in a chart card when there is nothing to plot. */
+function EmptyChart({ label }: { label: string }) {
+  return (
+    <div className="grid place-items-center h-[200px] rounded-xl bg-slate-50 text-slate-400 text-sm">
+      {label}
+    </div>
   );
 }
 
