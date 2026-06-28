@@ -93,8 +93,24 @@ CREATE TABLE IF NOT EXISTS assignment_status (
   UNIQUE (assignment_id, student_id)
 );
 
+-- ---------------------------------------------------------------------------
+-- questions (students ask the tutor; tutor replies + marks resolved)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS questions (
+  id          serial PRIMARY KEY,
+  student_id  int NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  subject     text,
+  body        text NOT NULL,
+  status      text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
+  answer      text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  answered_at timestamptz
+);
+
 -- Helpful indexes
 CREATE INDEX IF NOT EXISTS idx_attendance_session ON attendance(session_id);
+CREATE INDEX IF NOT EXISTS idx_questions_student ON questions(student_id);
+CREATE INDEX IF NOT EXISTS idx_questions_status ON questions(status);
 CREATE INDEX IF NOT EXISTS idx_ledger_student ON ledger(student_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_is_open ON sessions(is_open);
 CREATE INDEX IF NOT EXISTS idx_topics_covered ON topics(is_covered);

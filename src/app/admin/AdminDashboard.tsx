@@ -26,6 +26,9 @@ import {
   getStudentDetail,
   updateLedgerEntry,
   deleteLedgerEntry,
+  answerQuestion,
+  setQuestionStatus,
+  deleteQuestion,
   adminLogout,
   type StudentRow,
   type SessionRow,
@@ -36,6 +39,7 @@ import {
   type AssignmentStudent,
   type StudentDetail,
   type DashboardStats,
+  type QuestionRow,
 } from "@/actions/admin";
 import {
   ResponsiveContainer,
@@ -51,7 +55,14 @@ import {
   Cell,
 } from "recharts";
 
-type Tab = "dashboard" | "students" | "sessions" | "payments" | "topics" | "assignments";
+type Tab =
+  | "dashboard"
+  | "students"
+  | "sessions"
+  | "payments"
+  | "topics"
+  | "assignments"
+  | "questions";
 
 export default function AdminDashboard({
   students,
@@ -61,6 +72,7 @@ export default function AdminDashboard({
   topics,
   assignmentMatrix,
   dashboardStats,
+  questions,
 }: {
   students: StudentRow[];
   openSession: SessionRow | null;
@@ -69,9 +81,12 @@ export default function AdminDashboard({
   topics: TopicRow[];
   assignmentMatrix: AssignmentMatrix;
   dashboardStats: DashboardStats;
+  questions: QuestionRow[];
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
   const router = useRouter();
+
+  const openQuestions = questions.filter((q) => q.status === "open").length;
 
   const tabs: [Tab, string][] = [
     ["dashboard", "Dashboard"],
@@ -80,6 +95,7 @@ export default function AdminDashboard({
     ["payments", "Payments"],
     ["topics", "Topics"],
     ["assignments", "Tasks"],
+    ["questions", "Questions"],
   ];
 
   return (
@@ -99,11 +115,16 @@ export default function AdminDashboard({
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`flex-1 whitespace-nowrap rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
+            className={`relative flex-1 whitespace-nowrap rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
               tab === t ? "bg-white shadow-sm text-brand-700" : "text-slate-600"
             }`}
           >
             {label}
+            {t === "questions" && openQuestions > 0 && (
+              <span className="ml-1 inline-flex items-center justify-center rounded-full bg-rose-500 text-white text-[10px] font-bold min-w-[18px] h-[18px] px-1 align-middle">
+                {openQuestions}
+              </span>
+            )}
           </button>
         ))}
       </nav>
@@ -116,6 +137,7 @@ export default function AdminDashboard({
       {tab === "payments" && <PaymentsTab students={students} />}
       {tab === "topics" && <TopicsTab topics={topics} />}
       {tab === "assignments" && <AssignmentsTab matrix={assignmentMatrix} />}
+      {tab === "questions" && <QuestionsTab questions={questions} />}
     </main>
   );
 }
@@ -2036,5 +2058,184 @@ function AssignmentEditModal({
         </div>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Questions (students ask, tutor replies)
+// ---------------------------------------------------------------------------
+function QuestionsTab({ questions }: { questions: QuestionRow[] }) {
+  const open = questions.filter((q) => q.status === "open");
+  const resolved = questions.filter((q) => q.status === "resolved");
+
+  return (
+    <>
+      <Card>
+        <div className="flex items-center justify-between">
+          <h2 className="font-bold">Student questions</h2>
+          <span className="text-xs rounded-full bg-amber-100 text-amber-700 px-2.5 py-1 font-semibold">
+            {open.length} waiting
+          </span>
+        </div>
+        <p className="text-slate-500 text-sm mt-1">
+          Questions students sent from their portal. Reply and they&apos;ll see your answer.
+        </p>
+      </Card>
+
+      <Card>
+        <h2 className="font-bold mb-3">📨 Waiting for reply ({open.length})</h2>
+        <ul className="divide-y">
+          {open.map((q) => (
+            <QuestionItem key={q.id} q={q} />
+          ))}
+          {open.length === 0 && (
+            <li className="py-6 text-center text-slate-400 text-sm">
+              Nothing waiting — you&apos;re all caught up. 🎉
+            </li>
+          )}
+        </ul>
+      </Card>
+
+      <Card>
+        <h2 className="font-bold mb-3">✅ Answered ({resolved.length})</h2>
+        <ul className="divide-y">
+          {resolved.map((q) => (
+            <QuestionItem key={q.id} q={q} />
+          ))}
+          {resolved.length === 0 && (
+            <li className="py-4 text-center text-slate-400 text-sm">Nothing answered yet.</li>
+          )}
+        </ul>
+      </Card>
+    </>
+  );
+}
+
+function QuestionItem({ q }: { q: QuestionRow }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [replying, setReplying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function onReply(formData: FormData) {
+    setError(null);
+    start(async () => {
+      const res = await answerQuestion(q.id, formData);
+      if (res.error) {
+        setError(res.error);
+        return;
+      }
+      setReplying(false);
+      router.refresh();
+    });
+  }
+
+  function onToggleStatus() {
+    start(async () => {
+      await setQuestionStatus(q.id, q.status === "open" ? "resolved" : "open");
+      router.refresh();
+    });
+  }
+
+  function onDelete() {
+    if (!confirm("Delete this question permanently?")) return;
+    setError(null);
+    start(async () => {
+      const res = await deleteQuestion(q.id);
+      if (res.error) {
+        setError(res.error);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  return (
+    <li className="py-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-semibold">{q.student_name}</p>
+          <p className="text-slate-400 text-xs break-all">
+            {q.student_email || "no email on file"} · {fmt(q.created_at)}
+          </p>
+        </div>
+        <span
+          className={`shrink-0 text-xs rounded-full px-2 py-0.5 font-medium ${
+            q.status === "resolved"
+              ? "bg-emerald-100 text-emerald-700"
+              : "bg-amber-100 text-amber-700"
+          }`}
+        >
+          {q.status}
+        </span>
+      </div>
+
+      {q.subject && (
+        <p className="mt-2 text-xs font-semibold text-brand-700">{q.subject}</p>
+      )}
+      <p className="mt-1 text-sm whitespace-pre-line">{q.body}</p>
+
+      {q.answer && (
+        <div className="mt-2 rounded-lg bg-brand-50 border border-brand-100 p-2.5">
+          <p className="text-xs font-semibold text-brand-700 mb-0.5">Your reply</p>
+          <p className="text-sm whitespace-pre-line text-slate-700">{q.answer}</p>
+        </div>
+      )}
+
+      {replying ? (
+        <form action={onReply} className="mt-2 space-y-2">
+          <textarea
+            name="answer"
+            rows={3}
+            defaultValue={q.answer ?? ""}
+            placeholder="Write your reply…"
+            className={fieldClass()}
+          />
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={pending}
+              className="rounded-xl bg-brand-600 px-3 py-2 text-white text-sm font-semibold disabled:opacity-50"
+            >
+              Send reply
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setReplying(false);
+                setError(null);
+              }}
+              className="rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setReplying(true)}
+            className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1"
+          >
+            {q.answer ? "Edit reply" : "Reply"}
+          </button>
+          <button
+            onClick={onToggleStatus}
+            disabled={pending}
+            className="text-xs rounded-lg border border-slate-300 text-slate-600 px-2 py-1 disabled:opacity-50"
+          >
+            {q.status === "open" ? "Mark resolved" : "Reopen"}
+          </button>
+          <button
+            onClick={onDelete}
+            disabled={pending}
+            className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1 disabled:opacity-50"
+          >
+            Delete
+          </button>
+        </div>
+      )}
+      {error && <p className="text-rose-600 text-xs mt-1">{error}</p>}
+    </li>
   );
 }

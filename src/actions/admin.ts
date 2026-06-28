@@ -884,3 +884,87 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     topDebtors: debtorRows.map((r) => ({ name: r.name, balance: Number(r.balance) })),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Student questions (Q&A)
+// ---------------------------------------------------------------------------
+export type QuestionRow = {
+  id: number;
+  student_id: number;
+  student_name: string;
+  student_email: string | null;
+  subject: string | null;
+  body: string;
+  status: "open" | "resolved";
+  answer: string | null;
+  created_at: string;
+  answered_at: string | null;
+};
+
+export async function getQuestions(): Promise<QuestionRow[]> {
+  await assertAdmin();
+  return (await sql`
+    SELECT
+      q.id, q.student_id,
+      s.name  AS student_name,
+      s.email AS student_email,
+      q.subject, q.body, q.status, q.answer, q.created_at, q.answered_at
+    FROM questions q
+    JOIN students s ON s.id = q.student_id
+    ORDER BY (q.status = 'open') DESC, q.created_at DESC
+  `) as QuestionRow[];
+}
+
+export async function answerQuestion(
+  id: number,
+  formData: FormData
+): Promise<{ error?: string }> {
+  await assertAdmin();
+  const answer = String(formData.get("answer") ?? "").trim();
+  if (!answer) return { error: "Write a reply first." };
+  try {
+    await sql`
+      UPDATE questions
+      SET answer = ${answer}, status = 'resolved', answered_at = now()
+      WHERE id = ${id}
+    `;
+  } catch (e) {
+    return {
+      error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save reply.",
+    };
+  }
+  revalidatePath("/admin");
+  return {};
+}
+
+export async function setQuestionStatus(
+  id: number,
+  status: "open" | "resolved"
+): Promise<void> {
+  await assertAdmin();
+  if (status === "resolved") {
+    // Keep an existing answered_at, otherwise stamp it now.
+    await sql`
+      UPDATE questions
+      SET status = 'resolved', answered_at = COALESCE(answered_at, now())
+      WHERE id = ${id}
+    `;
+  } else {
+    // Reopening drops the answered timestamp.
+    await sql`UPDATE questions SET status = 'open', answered_at = NULL WHERE id = ${id}`;
+  }
+  revalidatePath("/admin");
+}
+
+export async function deleteQuestion(id: number): Promise<{ error?: string }> {
+  await assertAdmin();
+  try {
+    await sql`DELETE FROM questions WHERE id = ${id}`;
+  } catch (e) {
+    return {
+      error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete question.",
+    };
+  }
+  revalidatePath("/admin");
+  return {};
+}

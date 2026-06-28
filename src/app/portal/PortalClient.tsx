@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { checkIn, type PortalData, type NextClass } from "@/actions/student";
+import {
+  checkIn,
+  submitQuestion,
+  type PortalData,
+  type NextClass,
+} from "@/actions/student";
 import { studentLogout } from "@/actions/studentAuth";
 import {
   PAYMENT_EASYPAISA_NUMBER,
@@ -10,7 +15,7 @@ import {
   TUTOR_WHATSAPP_NUMBER,
 } from "@/lib/constants";
 
-type Tab = "class" | "topics" | "assignments" | "record";
+type Tab = "class" | "topics" | "assignments" | "record" | "ask";
 
 function fmt(d: string | null): string {
   if (!d) return "";
@@ -45,14 +50,16 @@ export default function PortalClient({ data }: { data: PortalData }) {
       {tab === "topics" && <TopicsTab data={data} />}
       {tab === "assignments" && <AssignmentsTab data={data} />}
       {tab === "record" && <RecordTab data={data} />}
+      {tab === "ask" && <AskTab data={data} />}
 
       {/* Bottom tab bar (mobile-first) */}
-      <nav className="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-white border-t border-slate-200 grid grid-cols-4">
+      <nav className="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-white border-t border-slate-200 grid grid-cols-5">
         {([
           ["class", "Class", "🏫"],
           ["topics", "Topics", "📚"],
           ["assignments", "Tasks", "📝"],
           ["record", "Record", "📊"],
+          ["ask", "Ask", "💬"],
         ] as [Tab, string, string][]).map(([t, label, icon]) => (
           <button
             key={t}
@@ -500,6 +507,123 @@ function RecordTab({ data }: { data: PortalData }) {
                 >
                   {l.type === "penalty" ? "+" : "−"}Rs {l.amount}
                 </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Ask (send a question to the tutor + see replies)
+// ---------------------------------------------------------------------------
+function AskTab({ data }: { data: PortalData }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [sent, setSent] = useState(false);
+  const [body, setBody] = useState("");
+  const [subject, setSubject] = useState("");
+
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSent(false);
+    if (body.trim().length === 0) {
+      setError("Please type your question.");
+      return;
+    }
+    const fd = new FormData();
+    fd.set("subject", subject);
+    fd.set("body", body);
+    start(async () => {
+      const res = await submitQuestion(fd);
+      if (res.error) {
+        setError(res.error);
+        return;
+      }
+      setBody("");
+      setSubject("");
+      setSent(true);
+      router.refresh();
+    });
+  }
+
+  return (
+    <>
+      <Card>
+        <h2 className="font-bold mb-1">💬 Ask your tutor</h2>
+        <p className="text-slate-500 text-sm mb-3">
+          Facing a problem or have a question? Send it here. Your tutor will see it and
+          reply — you&apos;ll find their answer below.
+        </p>
+        <form onSubmit={onSubmit} className="space-y-2">
+          <input
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            placeholder="Topic (optional) — e.g. Fees, Lesson 5"
+            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none"
+          />
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={4}
+            placeholder="Describe your question or problem…"
+            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none"
+          />
+          {error && <p className="text-rose-600 text-sm">{error}</p>}
+          {sent && (
+            <p className="text-emerald-600 text-sm">Sent! Your tutor will get back to you.</p>
+          )}
+          <button
+            type="submit"
+            disabled={pending || body.trim().length === 0}
+            className="w-full rounded-xl bg-brand-600 px-4 py-2.5 text-white font-semibold active:scale-[0.98] transition disabled:opacity-50"
+          >
+            {pending ? "Sending…" : "Send question"}
+          </button>
+        </form>
+      </Card>
+
+      <Card>
+        <h2 className="font-bold mb-3">Your questions</h2>
+        {data.questions.length === 0 ? (
+          <p className="text-slate-400 text-sm">You haven&apos;t asked anything yet.</p>
+        ) : (
+          <ul className="space-y-3">
+            {data.questions.map((q) => (
+              <li key={q.id} className="rounded-xl border border-slate-200 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    {q.subject && (
+                      <p className="text-xs font-semibold text-brand-700">{q.subject}</p>
+                    )}
+                    <p className="text-sm whitespace-pre-line">{q.body}</p>
+                    <p className="text-slate-400 text-xs mt-1">{fmt(q.created_at)}</p>
+                  </div>
+                  <span
+                    className={`shrink-0 text-xs rounded-full px-2 py-0.5 font-medium ${
+                      q.status === "resolved"
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-amber-100 text-amber-700"
+                    }`}
+                  >
+                    {q.status === "resolved" ? "answered" : "waiting"}
+                  </span>
+                </div>
+                {q.answer && (
+                  <div className="mt-2 rounded-lg bg-brand-50 border border-brand-100 p-2.5">
+                    <p className="text-xs font-semibold text-brand-700 mb-0.5">
+                      Tutor&apos;s reply
+                    </p>
+                    <p className="text-sm whitespace-pre-line text-slate-700">{q.answer}</p>
+                    {q.answered_at && (
+                      <p className="text-slate-400 text-xs mt-1">{fmt(q.answered_at)}</p>
+                    )}
+                  </div>
+                )}
               </li>
             ))}
           </ul>

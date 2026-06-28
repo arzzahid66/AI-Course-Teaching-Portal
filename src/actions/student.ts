@@ -47,6 +47,16 @@ export type NextClass = {
   scheduled_at: string;
 };
 
+export type MyQuestion = {
+  id: number;
+  subject: string | null;
+  body: string;
+  status: "open" | "resolved";
+  answer: string | null;
+  created_at: string;
+  answered_at: string | null;
+};
+
 export type PortalData = {
   name: string;
   email: string | null;
@@ -57,6 +67,7 @@ export type PortalData = {
   topics: { upcoming: Topic[]; past: Topic[] };
   assignments: AssignmentWithStatus[];
   ledger: LedgerEntry[];
+  questions: MyQuestion[];
 };
 
 export type CheckInResult =
@@ -183,6 +194,14 @@ export async function getPortalData(): Promise<PortalData> {
     LIMIT 50
   `) as (Omit<LedgerEntry, "amount"> & { amount: string })[];
 
+  const questions = (await sql`
+    SELECT id, subject, body, status, answer, created_at, answered_at
+    FROM questions
+    WHERE student_id = ${studentId}
+    ORDER BY created_at DESC
+    LIMIT 50
+  `) as MyQuestion[];
+
   return {
     name,
     email,
@@ -193,7 +212,30 @@ export async function getPortalData(): Promise<PortalData> {
     topics: { upcoming, past },
     assignments: assignmentsRaw,
     ledger: ledger.map((l) => ({ ...l, amount: Number(l.amount) })),
+    questions,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Ask a question (student → tutor)
+// ---------------------------------------------------------------------------
+export async function submitQuestion(formData: FormData): Promise<{ error?: string }> {
+  const studentId = await requireStudentId();
+  const subject = String(formData.get("subject") ?? "").trim();
+  const body = String(formData.get("body") ?? "").trim();
+
+  if (!body) return { error: "Please type your question." };
+  if (body.length > 2000) return { error: "Question is too long (max 2000 characters)." };
+
+  try {
+    await sql`
+      INSERT INTO questions (student_id, subject, body)
+      VALUES (${studentId}, ${subject || null}, ${body})
+    `;
+  } catch {
+    return { error: "Could not send your question. Please try again." };
+  }
+  return {};
 }
 
 // ---------------------------------------------------------------------------
