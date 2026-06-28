@@ -13,6 +13,7 @@ import {
   PAYMENT_EASYPAISA_NUMBER,
   PAYMENT_ACCOUNT_NAME,
   TUTOR_WHATSAPP_NUMBER,
+  PORTAL_DEMO_YOUTUBE_ID,
 } from "@/lib/constants";
 
 type Tab = "class" | "topics" | "assignments" | "record" | "ask";
@@ -46,7 +47,12 @@ export default function PortalClient({ data }: { data: PortalData }) {
         </button>
       </header>
 
-      {tab === "class" && <ClassTab data={data} />}
+      {tab === "class" && (
+        <>
+          <ClassTab data={data} />
+          <HowToVideoCard />
+        </>
+      )}
       {tab === "topics" && <TopicsTab data={data} />}
       {tab === "assignments" && <AssignmentsTab data={data} />}
       {tab === "record" && <RecordTab data={data} />}
@@ -82,6 +88,31 @@ function Card({ children }: { children: React.ReactNode }) {
     <section className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-100 p-5 mb-4">
       {children}
     </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// "How to use this portal" demo video (shown in the Class tab)
+// ---------------------------------------------------------------------------
+function HowToVideoCard() {
+  if (!PORTAL_DEMO_YOUTUBE_ID) return null;
+  return (
+    <Card>
+      <h2 className="font-bold mb-1">▶️ How to use this portal</h2>
+      <p className="text-slate-500 text-sm mb-3">
+        New here? Watch this quick demo from your tutor.
+      </p>
+      <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-slate-900">
+        <iframe
+          className="absolute inset-0 h-full w-full"
+          src={`https://www.youtube.com/embed/${PORTAL_DEMO_YOUTUBE_ID}?rel=0`}
+          title="How to use this portal"
+          loading="lazy"
+          allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+        />
+      </div>
+    </Card>
   );
 }
 
