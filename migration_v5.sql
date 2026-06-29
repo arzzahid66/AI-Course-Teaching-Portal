@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS course_outcomes (
 CREATE INDEX IF NOT EXISTS idx_curriculum_order ON curriculum_weeks(sort_order);
 CREATE INDEX IF NOT EXISTS idx_outcomes_order   ON course_outcomes(sort_order);
 
+
+
 -- ---------------------------------------------------------------------------
 -- Seed the 8-week roadmap (only if the table is empty, so re-running is safe)
 -- ---------------------------------------------------------------------------
