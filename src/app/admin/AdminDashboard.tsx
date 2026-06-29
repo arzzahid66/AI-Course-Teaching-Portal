@@ -17,6 +17,7 @@ import {
   deleteSession,
   recordPayment,
   createTopic,
+  updateTopic,
   setTopicCovered,
   deleteTopic,
   createCurriculumWeek,
@@ -35,6 +36,7 @@ import {
   answerQuestion,
   setQuestionStatus,
   deleteQuestion,
+  clearLoginLogs,
   adminLogout,
   type StudentRow,
   type SessionRow,
@@ -48,6 +50,7 @@ import {
   type StudentDetail,
   type DashboardStats,
   type QuestionRow,
+  type LoginLogRow,
 } from "@/actions/admin";
 import {
   ResponsiveContainer,
@@ -71,7 +74,8 @@ type Tab =
   | "topics"
   | "curriculum"
   | "assignments"
-  | "questions";
+  | "questions"
+  | "logs";
 
 export default function AdminDashboard({
   students,
@@ -84,6 +88,7 @@ export default function AdminDashboard({
   assignmentMatrix,
   dashboardStats,
   questions,
+  loginLogs,
 }: {
   students: StudentRow[];
   openSession: SessionRow | null;
@@ -95,6 +100,7 @@ export default function AdminDashboard({
   assignmentMatrix: AssignmentMatrix;
   dashboardStats: DashboardStats;
   questions: QuestionRow[];
+  loginLogs: LoginLogRow[];
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
   const router = useRouter();
@@ -110,6 +116,7 @@ export default function AdminDashboard({
     ["curriculum", "Course"],
     ["assignments", "Tasks"],
     ["questions", "Questions"],
+    ["logs", "Logs"],
   ];
 
   return (
@@ -153,6 +160,7 @@ export default function AdminDashboard({
       {tab === "curriculum" && <CourseTab weeks={curriculum} outcomes={outcomes} />}
       {tab === "assignments" && <AssignmentsTab matrix={assignmentMatrix} />}
       {tab === "questions" && <QuestionsTab questions={questions} />}
+      {tab === "logs" && <LogsTab logs={loginLogs} />}
     </main>
   );
 }
@@ -1790,6 +1798,7 @@ function TopicsTab({ topics }: { topics: TopicRow[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<TopicRow | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
   function onCreate(formData: FormData) {
@@ -1833,6 +1842,12 @@ function TopicsTab({ topics }: { topics: TopicRow[] }) {
             }`}
           >
             {t.is_covered ? "covered" : "mark covered"}
+          </button>
+          <button
+            onClick={() => setEditing(t)}
+            className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1"
+          >
+            Edit
           </button>
           <button
             onClick={() =>
@@ -1886,6 +1901,306 @@ function TopicsTab({ topics }: { topics: TopicRow[] }) {
           {past.map(row)}
           {past.length === 0 && (
             <li className="py-4 text-center text-slate-400 text-sm">Nothing yet.</li>
+          )}
+        </ul>
+      </Card>
+
+      {editing && (
+        <TopicEditModal topic={editing} onClose={() => setEditing(null)} />
+      )}
+    </>
+  );
+}
+
+function TopicEditModal({
+  topic,
+  onClose,
+}: {
+  topic: TopicRow;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState<string | null>(null);
+
+  function onSave(formData: FormData) {
+    setMsg(null);
+    // Convert the local datetime-local value to an absolute UTC ISO timestamp.
+    const local = String(formData.get("planned_at") ?? "");
+    if (local) {
+      const d = new Date(local);
+      if (!Number.isNaN(d.getTime())) formData.set("planned_at", d.toISOString());
+    }
+    start(async () => {
+      try {
+        const res = await updateTopic(topic.id, formData);
+        if (res.error) {
+          setMsg(res.error);
+          return;
+        }
+        router.refresh();
+        onClose();
+      } catch (e) {
+        setMsg(e instanceof Error ? e.message : "Could not save topic.");
+      }
+    });
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4 z-50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-bold">Edit topic</h2>
+          <button onClick={onClose} className="text-slate-400 text-2xl leading-none">
+            ×
+          </button>
+        </div>
+
+        <form action={onSave} className="space-y-2">
+          <input
+            name="title"
+            defaultValue={topic.title}
+            placeholder="Topic title"
+            className={fieldClass()}
+          />
+          <input
+            name="description"
+            defaultValue={topic.description ?? ""}
+            placeholder="Short description (optional)"
+            className={fieldClass()}
+          />
+          <input
+            name="planned_at"
+            type="datetime-local"
+            defaultValue={toDatetimeLocal(topic.planned_at)}
+            className={fieldClass()}
+          />
+          <button
+            type="submit"
+            disabled={pending}
+            className="w-full rounded-xl bg-brand-600 px-4 py-2.5 text-white font-semibold disabled:opacity-50"
+          >
+            Save changes
+          </button>
+        </form>
+        {msg && <p className="text-sm mt-2 text-slate-600">{msg}</p>}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Logs (login activity tracking)
+// ---------------------------------------------------------------------------
+/** Boil a raw user-agent string down to a short, friendly device label. */
+function deviceLabel(ua: string | null): string {
+  if (!ua) return "Unknown device";
+  const os = /Windows/i.test(ua)
+    ? "Windows"
+    : /iPhone|iPad|iOS/i.test(ua)
+    ? "iOS"
+    : /Android/i.test(ua)
+    ? "Android"
+    : /Mac OS X|Macintosh/i.test(ua)
+    ? "macOS"
+    : /Linux/i.test(ua)
+    ? "Linux"
+    : "";
+  const browser = /Edg\//i.test(ua)
+    ? "Edge"
+    : /OPR\/|Opera/i.test(ua)
+    ? "Opera"
+    : /Chrome\//i.test(ua)
+    ? "Chrome"
+    : /Firefox\//i.test(ua)
+    ? "Firefox"
+    : /Safari\//i.test(ua)
+    ? "Safari"
+    : "";
+  return [browser, os].filter(Boolean).join(" · ") || "Unknown device";
+}
+
+function LogsTab({ logs }: { logs: LoginLogRow[] }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [query, setQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState<"all" | "student" | "admin">("all");
+
+  const q = query.trim().toLowerCase();
+  const filtered = logs.filter((l) => {
+    if (roleFilter !== "all" && l.role !== roleFilter) return false;
+    if (!q) return true;
+    return (
+      (l.name ?? "").toLowerCase().includes(q) ||
+      (l.email ?? "").toLowerCase().includes(q)
+    );
+  });
+
+  // The single most recent login (across all roles) — answers "who logged in last".
+  const last = logs[0] ?? null;
+
+  // Most recent login per distinct person (keyed by email, else name).
+  const seen = new Set<string>();
+  const lastPerUser = logs.filter((l) => {
+    const key = (l.email ?? l.name ?? String(l.id)).toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  function onClear() {
+    if (!confirm("Clear all login logs? This permanently deletes the history.")) return;
+    start(async () => {
+      await clearLoginLogs();
+      router.refresh();
+    });
+  }
+
+  const roleChips: [typeof roleFilter, string][] = [
+    ["all", "All"],
+    ["student", "Students"],
+    ["admin", "Admin"],
+  ];
+
+  function RoleBadge({ role }: { role: string }) {
+    return (
+      <span
+        className={`text-xs rounded-full px-2 py-0.5 font-medium ${
+          role === "admin"
+            ? "bg-violet-100 text-violet-700"
+            : "bg-brand-50 text-brand-700"
+        }`}
+      >
+        {role}
+      </span>
+    );
+  }
+
+  return (
+    <>
+      <Card>
+        <h2 className="font-bold mb-1">Last login</h2>
+        {!last ? (
+          <p className="text-slate-500 text-sm">No logins recorded yet.</p>
+        ) : (
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="font-semibold truncate">
+                {last.name || "—"} <RoleBadge role={last.role} />
+              </p>
+              <p className="text-slate-500 text-sm truncate">{last.email || "no email"}</p>
+              <p className="text-slate-400 text-xs">
+                {fmt(last.created_at)} · {deviceLabel(last.user_agent)}
+                {last.ip ? ` · ${last.ip}` : ""}
+              </p>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <div className="flex items-center justify-between mb-3 gap-2">
+          <h2 className="font-bold">
+            Login activity{" "}
+            <span className="text-slate-400 font-normal">({filtered.length})</span>
+          </h2>
+          <button
+            onClick={onClear}
+            disabled={pending || logs.length === 0}
+            className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1 disabled:opacity-40"
+          >
+            Clear logs
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          {roleChips.map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setRoleFilter(key)}
+              className={`text-xs rounded-full px-3 py-1.5 font-medium border transition ${
+                roleFilter === key
+                  ? "bg-brand-600 border-brand-600 text-white"
+                  : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search name or email…"
+            className="ml-auto min-w-0 flex-1 sm:flex-none sm:w-56 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none"
+          />
+        </div>
+
+        <div className="overflow-x-auto -mx-2">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-slate-500 border-b">
+                <th className="py-2 px-2">Name</th>
+                <th className="py-2 px-2">Email</th>
+                <th className="py-2 px-2">Role</th>
+                <th className="py-2 px-2">When</th>
+                <th className="py-2 px-2">Device</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((l) => (
+                <tr key={l.id} className="border-b last:border-0 align-top">
+                  <td className="py-2 px-2 font-medium">{l.name || "—"}</td>
+                  <td className="py-2 px-2 text-slate-600 break-all">
+                    {l.email || <span className="text-slate-300">—</span>}
+                  </td>
+                  <td className="py-2 px-2">
+                    <RoleBadge role={l.role} />
+                  </td>
+                  <td className="py-2 px-2 text-slate-600 whitespace-nowrap">
+                    {fmt(l.created_at)}
+                  </td>
+                  <td className="py-2 px-2 text-slate-500" title={l.user_agent ?? ""}>
+                    {deviceLabel(l.user_agent)}
+                    {l.ip && <span className="block text-xs text-slate-400">{l.ip}</span>}
+                  </td>
+                </tr>
+              ))}
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="py-6 text-center text-slate-400">
+                    {logs.length === 0 ? "No logins recorded yet." : "No logins match this filter."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card>
+        <h2 className="font-bold mb-2">Each user&apos;s last login</h2>
+        <ul className="divide-y text-sm">
+          {lastPerUser.map((l) => (
+            <li key={l.id} className="flex items-center justify-between gap-2 py-2">
+              <div className="min-w-0">
+                <p className="font-medium truncate">
+                  {l.name || l.email || "—"} <RoleBadge role={l.role} />
+                </p>
+                <p className="text-slate-400 text-xs truncate">{l.email || "no email"}</p>
+              </div>
+              <span className="text-slate-500 text-xs shrink-0 whitespace-nowrap">
+                {fmt(l.created_at)}
+              </span>
+            </li>
+          ))}
+          {lastPerUser.length === 0 && (
+            <li className="py-4 text-center text-slate-400">No logins recorded yet.</li>
           )}
         </ul>
       </Card>

@@ -12,6 +12,7 @@ import {
   hashPassword,
 } from "@/lib/auth";
 import { MISSED_CLASS_PENALTY, MISSED_CLASS_REASON } from "@/lib/constants";
+import { recordLoginLog } from "@/lib/loginLog";
 
 // ---------------------------------------------------------------------------
 // Auth
@@ -26,6 +27,12 @@ export async function adminLogin(
     return { error: "Wrong email or password." };
   }
   await setAdminCookie();
+  await recordLoginLog({
+    studentId: null,
+    role: "admin",
+    name: "Admin",
+    email: email.trim() || process.env.ADMIN_EMAIL || null,
+  });
   revalidatePath("/admin");
   return {};
 }
@@ -481,6 +488,27 @@ export async function createTopic(formData: FormData): Promise<{ error?: string 
   return {};
 }
 
+export async function updateTopic(
+  id: number,
+  formData: FormData
+): Promise<{ error?: string }> {
+  await assertAdmin();
+  const title = String(formData.get("title") ?? "").trim();
+  const description = String(formData.get("description") ?? "").trim();
+  const plannedAt = String(formData.get("planned_at") ?? "").trim();
+  if (!title) return { error: "Title is required." };
+
+  await sql`
+    UPDATE topics
+    SET title = ${title},
+        description = ${description || null},
+        planned_at = ${plannedAt || null}
+    WHERE id = ${id}
+  `;
+  revalidatePath("/admin");
+  return {};
+}
+
 export async function setTopicCovered(id: number, covered: boolean): Promise<void> {
   await assertAdmin();
   await sql`UPDATE topics SET is_covered = ${covered} WHERE id = ${id}`;
@@ -491,6 +519,37 @@ export async function deleteTopic(id: number): Promise<void> {
   await assertAdmin();
   await sql`DELETE FROM topics WHERE id = ${id}`;
   revalidatePath("/admin");
+}
+
+// ---------------------------------------------------------------------------
+// Login logs (user activity tracking)
+// ---------------------------------------------------------------------------
+export type LoginLogRow = {
+  id: number;
+  student_id: number | null;
+  role: string;
+  name: string | null;
+  email: string | null;
+  ip: string | null;
+  user_agent: string | null;
+  created_at: string;
+};
+
+export async function getLoginLogs(limit = 200): Promise<LoginLogRow[]> {
+  await assertAdmin();
+  return (await sql`
+    SELECT id, student_id, role, name, email, ip, user_agent, created_at
+    FROM login_logs
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `) as LoginLogRow[];
+}
+
+export async function clearLoginLogs(): Promise<{ error?: string }> {
+  await assertAdmin();
+  await sql`DELETE FROM login_logs`;
+  revalidatePath("/admin");
+  return {};
 }
 
 // ---------------------------------------------------------------------------

@@ -3,8 +3,15 @@
 import { redirect } from "next/navigation";
 import { sql } from "@/lib/db";
 import { verifyPassword, setStudentCookie, clearStudentCookie } from "@/lib/auth";
+import { recordLoginLog } from "@/lib/loginLog";
 
-type Row = { id: number; password_hash: string | null; status: string };
+type Row = {
+  id: number;
+  name: string;
+  email: string | null;
+  password_hash: string | null;
+  status: string;
+};
 
 export async function studentLogin(
   _prev: { error?: string } | undefined,
@@ -18,7 +25,7 @@ export async function studentLogin(
   }
 
   const rows = (await sql`
-    SELECT id, password_hash, status
+    SELECT id, name, email, password_hash, status
     FROM students
     WHERE lower(email) = ${email}
     LIMIT 1
@@ -33,6 +40,12 @@ export async function studentLogin(
   }
 
   await setStudentCookie(student.id);
+  await recordLoginLog({
+    studentId: student.id,
+    role: "student",
+    name: student.name,
+    email: student.email,
+  });
   redirect("/portal");
 }
 

@@ -9,6 +9,7 @@ import {
   getAssignmentMatrix,
   getDashboardStats,
   getQuestions,
+  getLoginLogs,
   type DashboardStats,
 } from "@/actions/admin";
 import LoginForm from "./LoginForm";
@@ -57,6 +58,7 @@ export default async function AdminPage() {
     assignmentMatrix,
     dashboardStats,
     questions,
+    loginLogs,
   ] = await Promise.all([
     settle(getStudents(), []),
     settle(getOpenSessionWithAttendance(), { session: null, attendees: [] }),
@@ -67,6 +69,7 @@ export default async function AdminPage() {
     settle(getAssignmentMatrix(), { assignments: [], students: [], done: {} }),
     settle(getDashboardStats(), EMPTY_STATS),
     settle(getQuestions(), []),
+    settle(getLoginLogs(), []),
   ]);
 
   return (
@@ -81,6 +84,7 @@ export default async function AdminPage() {
       assignmentMatrix={assignmentMatrix}
       dashboardStats={dashboardStats}
       questions={questions}
+      loginLogs={loginLogs}
     />
   );
 }
