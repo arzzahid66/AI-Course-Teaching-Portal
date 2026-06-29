@@ -134,7 +134,7 @@ function TutorBioModal({ onClose }: { onClose: () => void }) {
         <button
           onClick={onClose}
           aria-label="Close"
-          className="absolute top-3 right-3 z-10 grid h-8 w-8 place-items-center rounded-full bg-white/20 text-white text-lg leading-none active:scale-95 transition"
+          className="absolute top-3 right-3 z-10 grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 text-lg leading-none active:scale-95 transition"
         >
           ✕
         </button>
@@ -155,40 +155,50 @@ function TutorBioCard() {
   const showPhoto = TUTOR_PHOTO && !imgFailed;
 
   return (
-    <section className="rounded-2xl bg-gradient-to-br from-brand-600 to-brand-700 text-white shadow-sm p-5">
-      <div className="flex items-center gap-4">
-        {showPhoto ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={TUTOR_PHOTO}
-            alt={TUTOR_NAME}
-            onError={() => setImgFailed(true)}
-            className="h-20 w-20 shrink-0 rounded-2xl object-cover ring-2 ring-white/40"
-          />
-        ) : (
-          <div className="grid h-20 w-20 shrink-0 place-items-center rounded-2xl bg-white/15 text-2xl font-bold ring-2 ring-white/40">
-            {initials}
-          </div>
-        )}
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wide text-white/70">
-            Your teacher
-          </p>
-          <h2 className="text-lg font-bold leading-tight">{TUTOR_NAME}</h2>
-          <p className="text-sm text-white/90">
-            {TUTOR_TITLE}
-            {TUTOR_COMPANY && (
-              <>
-                {" "}
-                <span className="text-white/70">at</span>{" "}
-                <span className="font-semibold">{TUTOR_COMPANY}</span>
-              </>
-            )}
-          </p>
-          <p className="text-xs text-white/70">📍 {TUTOR_LOCATION}</p>
-        </div>
+    <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+      {/* Slim brand accent header so the photo pops without drowning the text */}
+      <div className="bg-gradient-to-br from-brand-600 to-brand-700 px-5 pt-5 pb-12">
+        <p className="text-xs font-semibold uppercase tracking-wide text-white/80">
+          👤 Your teacher
+        </p>
       </div>
-      <p className="mt-4 text-sm leading-relaxed text-white/90">{TUTOR_BIO}</p>
+
+      <div className="px-5 pb-5">
+        <div className="-mt-9 flex items-end gap-4">
+          {showPhoto ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={TUTOR_PHOTO}
+              alt={TUTOR_NAME}
+              onError={() => setImgFailed(true)}
+              className="h-20 w-20 shrink-0 rounded-2xl object-cover ring-4 ring-white shadow-md"
+            />
+          ) : (
+            <div className="grid h-20 w-20 shrink-0 place-items-center rounded-2xl bg-brand-100 text-2xl font-bold text-brand-700 ring-4 ring-white shadow-md">
+              {initials}
+            </div>
+          )}
+          <div className="min-w-0 pb-1">
+            <h2 className="text-lg font-bold leading-tight text-slate-900">
+              {TUTOR_NAME}
+            </h2>
+            <p className="text-sm text-slate-600">
+              {TUTOR_TITLE}
+              {TUTOR_COMPANY && (
+                <>
+                  {" "}
+                  <span className="text-slate-400">at</span>{" "}
+                  <span className="font-semibold text-brand-700">{TUTOR_COMPANY}</span>
+                </>
+              )}
+            </p>
+          </div>
+        </div>
+
+        <p className="mt-2 text-xs text-slate-400">📍 {TUTOR_LOCATION}</p>
+
+        <p className="mt-4 text-sm leading-relaxed text-slate-700">{TUTOR_BIO}</p>
+      </div>
     </section>
   );
 }
