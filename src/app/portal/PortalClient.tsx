@@ -429,47 +429,94 @@ function TopicsTab({ data }: { data: PortalData }) {
 }
 
 // ---------------------------------------------------------------------------
-// Assignments
+// Assignments (numbered, date-ordered, tap a task to see details)
 // ---------------------------------------------------------------------------
 function AssignmentsTab({ data }: { data: PortalData }) {
+  const total = data.assignments.length;
+  const doneCount = data.assignments.filter((a) => a.status === "done").length;
+
   return (
     <Card>
-      <h2 className="font-bold mb-1">📝 Assignments</h2>
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="font-bold">📝 Tasks</h2>
+        {total > 0 && (
+          <span className="text-xs rounded-full bg-slate-100 text-slate-600 px-2.5 py-1 font-semibold">
+            {doneCount}/{total} done
+          </span>
+        )}
+      </div>
       <p className="text-slate-500 text-sm mb-3">
-        Send your work to your tutor on WhatsApp. They&apos;ll mark it done here.
+        Tap a task to see its details. Send your work to your tutor on WhatsApp — they&apos;ll
+        mark it done here.
       </p>
-      {data.assignments.length === 0 ? (
-        <p className="text-slate-400 text-sm">No assignments yet.</p>
+      {total === 0 ? (
+        <p className="text-slate-400 text-sm">No tasks yet.</p>
       ) : (
-        <ul className="space-y-3">
-          {data.assignments.map((a) => (
-            <li
-              key={a.id}
-              className="rounded-xl border border-slate-200 p-3 flex items-start justify-between gap-3"
-            >
-              <div>
-                <p className="font-semibold">{a.title}</p>
-                {a.description && (
-                  <p className="text-slate-600 text-sm whitespace-pre-line">{a.description}</p>
-                )}
-                {a.due_at && (
-                  <p className="text-slate-400 text-xs mt-0.5">Due {fmtDate(a.due_at)}</p>
-                )}
-              </div>
-              <span
-                className={`shrink-0 text-xs rounded-full px-2 py-0.5 font-medium ${
-                  a.status === "done"
-                    ? "bg-emerald-100 text-emerald-700"
-                    : "bg-amber-100 text-amber-700"
-                }`}
-              >
-                {a.status === "done" ? "done ✅" : "pending"}
-              </span>
-            </li>
+        <ul className="space-y-2">
+          {data.assignments.map((a, i) => (
+            <TaskItem key={a.id} task={a} number={i + 1} />
           ))}
         </ul>
       )}
     </Card>
+  );
+}
+
+function TaskItem({
+  task,
+  number,
+}: {
+  task: PortalData["assignments"][number];
+  number: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const done = task.status === "done";
+
+  return (
+    <li className="rounded-xl border border-slate-200 overflow-hidden">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="w-full flex items-center gap-3 p-3 text-left"
+      >
+        <span
+          className={`shrink-0 grid place-items-center h-7 w-7 rounded-full text-xs font-bold ${
+            done ? "bg-emerald-100 text-emerald-700" : "bg-brand-50 text-brand-700"
+          }`}
+        >
+          {number}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-semibold truncate">{task.title}</span>
+          {task.due_at && (
+            <span className="block text-slate-400 text-xs">Due {fmtDate(task.due_at)}</span>
+          )}
+        </span>
+        <span
+          className={`shrink-0 text-xs rounded-full px-2 py-0.5 font-medium ${
+            done ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+          }`}
+        >
+          {done ? "done ✅" : "pending"}
+        </span>
+        <span className={`shrink-0 text-slate-400 transition-transform ${open ? "rotate-90" : ""}`}>
+          ▶
+        </span>
+      </button>
+
+      {open && (
+        <div className="px-3 pb-3 pt-0 border-t border-slate-100 bg-slate-50/60">
+          {task.description ? (
+            <p className="text-slate-700 text-sm whitespace-pre-line mt-3">{task.description}</p>
+          ) : (
+            <p className="text-slate-400 text-sm mt-3">No extra details for this task.</p>
+          )}
+          {task.due_at && (
+            <p className="text-slate-500 text-xs mt-2">📅 Due {fmt(task.due_at)}</p>
+          )}
+        </div>
+      )}
+    </li>
   );
 }
 

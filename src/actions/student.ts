@@ -183,7 +183,7 @@ export async function getPortalData(): Promise<PortalData> {
     FROM assignments a
     LEFT JOIN assignment_status st
       ON st.assignment_id = a.id AND st.student_id = ${studentId}
-    ORDER BY COALESCE(a.due_at, a.created_at) DESC
+    ORDER BY COALESCE(a.due_at, a.created_at) ASC
   `) as AssignmentWithStatus[];
 
   const ledger = (await sql`
