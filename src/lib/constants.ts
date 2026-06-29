@@ -40,6 +40,14 @@ export const TUTOR_WHATSAPP_NUMBER = "923487356003";
  */
 export const PORTAL_DEMO_YOUTUBE_ID = "NTJbSGlWEkM";
 
+/**
+ * YouTube video ID for the "How to Submit an Assignment" guide shown to every
+ * student in the Class tab. Unlike the demo above, this card stays collapsed —
+ * it shows the title and a play button, and only loads the video once the
+ * student clicks play. Set to "" to hide the card entirely.
+ */
+export const ASSIGNMENT_GUIDE_YOUTUBE_ID = "ed7z10Ozkac";
+
 // ---------------------------------------------------------------------------
 // Tutor profile — shown to every student in an "About your teacher" card on the
 // Class tab. Edit these freely.

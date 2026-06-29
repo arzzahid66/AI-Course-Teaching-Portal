@@ -14,6 +14,7 @@ import {
   PAYMENT_ACCOUNT_NAME,
   TUTOR_WHATSAPP_NUMBER,
   PORTAL_DEMO_YOUTUBE_ID,
+  ASSIGNMENT_GUIDE_YOUTUBE_ID,
   TUTOR_NAME,
   TUTOR_TITLE,
   TUTOR_COMPANY,
@@ -69,6 +70,7 @@ export default function PortalClient({ data }: { data: PortalData }) {
           <ClassTab data={data} />
           <FeePurposeNote />
           <HowToVideoCard />
+          <AssignmentGuideCard />
         </>
       )}
       {tab === "course" && <CourseTab data={data} />}
@@ -257,6 +259,54 @@ function HowToVideoCard() {
           allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
           allowFullScreen
         />
+      </div>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// "How to Submit an Assignment" guide — collapsed until the student clicks play
+// ---------------------------------------------------------------------------
+function AssignmentGuideCard() {
+  const [playing, setPlaying] = useState(false);
+  if (!ASSIGNMENT_GUIDE_YOUTUBE_ID) return null;
+  return (
+    <Card>
+      <h2 className="font-bold mb-1">
+        📤 How to Submit an Assignment in ClassGate LMS
+      </h2>
+      <p className="text-slate-500 text-sm mb-3">
+        Step-by-step student guide. Tap play to watch.
+      </p>
+      <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-slate-900">
+        {playing ? (
+          <iframe
+            className="absolute inset-0 h-full w-full"
+            src={`https://www.youtube.com/embed/${ASSIGNMENT_GUIDE_YOUTUBE_ID}?rel=0&autoplay=1`}
+            title="How to Submit an Assignment in ClassGate LMS"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setPlaying(true)}
+            aria-label="Play video"
+            className="group absolute inset-0 flex items-center justify-center"
+            style={{
+              backgroundImage: `url(https://i.ytimg.com/vi/${ASSIGNMENT_GUIDE_YOUTUBE_ID}/hqdefault.jpg)`,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+            }}
+          >
+            <span className="absolute inset-0 bg-black/30 transition group-hover:bg-black/40" />
+            <span className="relative flex h-16 w-16 items-center justify-center rounded-full bg-red-600 text-white shadow-lg transition group-active:scale-95">
+              <svg viewBox="0 0 24 24" fill="currentColor" className="h-7 w-7 pl-0.5">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </span>
+          </button>
+        )}
       </div>
     </Card>
   );
