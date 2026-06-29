@@ -129,7 +129,7 @@ export default function AdminDashboard({
         ))}
       </nav>
 
-      {tab === "dashboard" && <DashboardTab stats={dashboardStats} />}
+      {tab === "dashboard" && <DashboardTab stats={dashboardStats} students={students} />}
       {tab === "students" && <StudentsTab students={students} />}
       {tab === "sessions" && (
         <SessionsTab openSession={openSession} attendees={attendees} sessions={sessions} />
@@ -246,12 +246,40 @@ function ChartTooltip({
   );
 }
 
-function DashboardTab({ stats }: { stats: DashboardStats }) {
+/** Normalize a free-text gender value into one of our known buckets. */
+function genderBucket(g: string | null): "female" | "male" | "other" | "unspecified" {
+  const v = (g ?? "").trim().toLowerCase();
+  if (v === "female" || v === "f") return "female";
+  if (v === "male" || v === "m") return "male";
+  if (v === "other") return "other";
+  return "unspecified";
+}
+
+const GENDER_META: Record<string, { label: string; color: string }> = {
+  female: { label: "Female", color: "#ec4899" },
+  male: { label: "Male", color: "#3b82f6" },
+  other: { label: "Other", color: "#a78bfa" },
+  unspecified: { label: "Unspecified", color: "#cbd5e1" },
+};
+
+function DashboardTab({ stats, students }: { stats: DashboardStats; students: StudentRow[] }) {
   const statusData = [
     { name: "Active", value: stats.students.active },
     { name: "Inactive", value: stats.students.inactive },
   ];
   const STATUS_COLORS = ["#10b981", "#cbd5e1"];
+
+  // Gender breakdown computed from the live student list (no DB change needed).
+  const genderCounts = students.reduce(
+    (acc, s) => {
+      acc[genderBucket(s.gender)]++;
+      return acc;
+    },
+    { female: 0, male: 0, other: 0, unspecified: 0 }
+  );
+  const genderData = (["female", "male", "other", "unspecified"] as const)
+    .map((k) => ({ name: GENDER_META[k].label, value: genderCounts[k], color: GENDER_META[k].color }))
+    .filter((d) => d.value > 0);
 
   const attendanceData = stats.attendance.map((s) => {
     const d = new Date(s.scheduled_at);
@@ -405,6 +433,57 @@ function DashboardTab({ stats }: { stats: DashboardStats }) {
         </Card>
       </div>
 
+      {/* Students by gender */}
+      <Card>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-bold">Students by gender</h2>
+          <span className="text-xs text-slate-400">Filter the full list in the Students tab</span>
+        </div>
+        {genderData.length === 0 ? (
+          <EmptyChart label="No students yet." />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+            <div className="relative">
+              <ResponsiveContainer width="100%" height={220}>
+                <PieChart>
+                  <Pie
+                    data={genderData}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={58}
+                    outerRadius={84}
+                    paddingAngle={2}
+                    stroke="none"
+                  >
+                    {genderData.map((d) => (
+                      <Cell key={d.name} fill={d.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<ChartTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-2xl font-bold text-slate-800">{students.length}</span>
+                <span className="text-xs text-slate-400">students</span>
+              </div>
+            </div>
+            <ul className="space-y-2">
+              {genderData.map((d) => {
+                const pct = students.length ? Math.round((d.value / students.length) * 100) : 0;
+                return (
+                  <li key={d.name} className="flex items-center gap-2 text-sm">
+                    <span className="h-3 w-3 rounded-full shrink-0" style={{ background: d.color }} />
+                    <span className="font-medium text-slate-700">{d.name}</span>
+                    <span className="ml-auto font-semibold text-slate-800">{d.value}</span>
+                    <span className="text-slate-400 text-xs w-10 text-right">{pct}%</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+      </Card>
+
       {/* Task completion */}
       <Card>
         <h2 className="font-bold mb-3">Task completion</h2>
@@ -450,8 +529,40 @@ function StudentsTab({ students }: { students: StudentRow[] }) {
   const [error, setError] = useState<string | null>(null);
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
   const [selected, setSelected] = useState<StudentRow | null>(null);
+  const [genderFilter, setGenderFilter] = useState<
+    "all" | "female" | "male" | "other" | "unspecified"
+  >("all");
+  const [copied, setCopied] = useState(false);
   const addRef = useRef<HTMLFormElement>(null);
   const bulkRef = useRef<HTMLFormElement>(null);
+
+  // Counts per gender bucket (for the filter chips) + the filtered list.
+  const counts = { all: students.length, female: 0, male: 0, other: 0, unspecified: 0 };
+  for (const s of students) counts[genderBucket(s.gender)]++;
+  const filtered =
+    genderFilter === "all"
+      ? students
+      : students.filter((s) => genderBucket(s.gender) === genderFilter);
+
+  async function copyEmails() {
+    const emails = filtered.map((s) => s.email).filter(Boolean).join(", ");
+    if (!emails) return;
+    try {
+      await navigator.clipboard.writeText(emails);
+    } catch {
+      window.prompt("Emails:", emails);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+
+  const filterChips: [typeof genderFilter, string][] = [
+    ["all", `All (${counts.all})`],
+    ["female", `Female (${counts.female})`],
+    ["male", `Male (${counts.male})`],
+    ["other", `Other (${counts.other})`],
+    ["unspecified", `Unspecified (${counts.unspecified})`],
+  ];
 
   function onAdd(formData: FormData) {
     setError(null);
@@ -532,12 +643,47 @@ function StudentsTab({ students }: { students: StudentRow[] }) {
       </Card>
 
       <Card>
-        <h2 className="font-bold mb-3">Students ({students.length})</h2>
+        <div className="flex items-center justify-between mb-3 gap-2">
+          <h2 className="font-bold">
+            Students{" "}
+            <span className="text-slate-400 font-normal">
+              ({filtered.length}
+              {genderFilter !== "all" ? ` of ${students.length}` : ""})
+            </span>
+          </h2>
+          <button
+            onClick={copyEmails}
+            disabled={filtered.every((s) => !s.email)}
+            className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1 disabled:opacity-40"
+            title="Copy the email of every student shown"
+          >
+            {copied ? "Copied!" : "Copy emails"}
+          </button>
+        </div>
+
+        {/* Gender filter */}
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {filterChips.map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setGenderFilter(key)}
+              className={`text-xs rounded-full px-3 py-1.5 font-medium border transition ${
+                genderFilter === key
+                  ? "bg-brand-600 border-brand-600 text-white"
+                  : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
         <div className="overflow-x-auto -mx-2">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-slate-500 border-b">
                 <th className="py-2 px-2">Name</th>
+                <th className="py-2 px-2">Gender</th>
                 <th className="py-2 px-2">Login</th>
                 <th className="py-2 px-2 text-right">Balance</th>
                 <th className="py-2 px-2">Status</th>
@@ -545,9 +691,16 @@ function StudentsTab({ students }: { students: StudentRow[] }) {
               </tr>
             </thead>
             <tbody>
-              {students.map((s) => (
+              {filtered.map((s) => (
                 <tr key={s.id} className="border-b last:border-0">
                   <td className="py-2 px-2 font-medium">{s.name}</td>
+                  <td className="py-2 px-2 capitalize text-slate-600">
+                    {s.gender ? (
+                      s.gender
+                    ) : (
+                      <span className="text-slate-300">—</span>
+                    )}
+                  </td>
                   <td className="py-2 px-2 text-slate-600">
                     {s.has_login ? (
                       <span className="text-xs">{s.email}</span>
@@ -593,10 +746,10 @@ function StudentsTab({ students }: { students: StudentRow[] }) {
                   </td>
                 </tr>
               ))}
-              {students.length === 0 && (
+              {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="py-6 text-center text-slate-400">
-                    No students yet.
+                  <td colSpan={6} className="py-6 text-center text-slate-400">
+                    {students.length === 0 ? "No students yet." : "No students match this filter."}
                   </td>
                 </tr>
               )}
@@ -625,6 +778,8 @@ function StudentDetailModal({
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
   const [editMsg, setEditMsg] = useState<string | null>(null);
+  const [showPw, setShowPw] = useState(false);
+  const [copiedPw, setCopiedPw] = useState(false);
   // Locally track the editable fields so the form + title reflect saved edits
   // immediately (the `student` prop stays stale until the page re-renders).
   const [details, setDetails] = useState({
@@ -773,6 +928,52 @@ function StudentDetailModal({
                 {data.balance > 0 ? `Rs ${data.balance} due` : "clear"}
               </span>
             </p>
+
+            {data.email && (
+              <div className="rounded-xl border border-slate-200 p-3 mb-3">
+                <h3 className="font-semibold text-sm mb-2">Login details</h3>
+                <div className="space-y-1.5 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-slate-500">Email</span>
+                    <span className="font-medium break-all text-right">{data.email}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-slate-500">Password</span>
+                    {data.password ? (
+                      <span className="flex items-center gap-2">
+                        <span className="font-mono">
+                          {showPw ? data.password : "•".repeat(Math.max(6, data.password.length))}
+                        </span>
+                        <button
+                          onClick={() => setShowPw((v) => !v)}
+                          className="text-xs rounded-lg border border-slate-300 px-2 py-0.5"
+                        >
+                          {showPw ? "Hide" : "Show"}
+                        </button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(data.password!);
+                            } catch {
+                              window.prompt("Password:", data.password!);
+                            }
+                            setCopiedPw(true);
+                            setTimeout(() => setCopiedPw(false), 1500);
+                          }}
+                          className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-0.5"
+                        >
+                          {copiedPw ? "Copied!" : "Copy"}
+                        </button>
+                      </span>
+                    ) : (
+                      <span className="text-slate-400 text-xs text-right">
+                        Not viewable — set a new one below
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="rounded-xl bg-slate-50 p-3 mb-4">
               <h3 className="font-semibold text-sm mb-2">
@@ -1392,7 +1593,16 @@ function PaymentsTab({ students }: { students: StudentRow[] }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   const formRef = useRef<HTMLFormElement>(null);
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? students.filter(
+        (s) =>
+          s.name.toLowerCase().includes(q) || (s.email ?? "").toLowerCase().includes(q)
+      )
+    : students;
 
   function onPay(formData: FormData) {
     setError(null);
@@ -1450,12 +1660,43 @@ function PaymentsTab({ students }: { students: StudentRow[] }) {
         <p className="text-slate-500 text-sm mb-3">
           Tap a student to view, edit or remove their fee &amp; payment entries.
         </p>
+
+        <div className="relative mb-3">
+          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+            🔍
+          </span>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by name or email…"
+            className="w-full rounded-xl border border-slate-300 pl-9 pr-9 py-2.5 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none"
+          />
+          {query && (
+            <button
+              onClick={() => setQuery("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 text-xl leading-none px-1"
+              title="Clear search"
+            >
+              ×
+            </button>
+          )}
+        </div>
+        {q && (
+          <p className="text-xs text-slate-400 mb-2">
+            Showing {filtered.length} of {students.length}
+          </p>
+        )}
+
         <ul className="divide-y text-sm">
-          {students.map((s) => (
+          {filtered.map((s) => (
             <StudentBalanceRow key={s.id} student={s} />
           ))}
-          {students.length === 0 && (
+          {students.length === 0 ? (
             <li className="py-6 text-center text-slate-400">No students yet.</li>
+          ) : (
+            filtered.length === 0 && (
+              <li className="py-6 text-center text-slate-400">No student matches “{query}”.</li>
+            )
           )}
         </ul>
       </Card>

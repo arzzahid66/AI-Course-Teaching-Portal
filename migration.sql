@@ -10,10 +10,11 @@ CREATE TABLE IF NOT EXISTS students (
   name          text NOT NULL,
   whatsapp      text,
   gender        text,
-  token         text UNIQUE,
-  email         text UNIQUE,
-  password_hash text,
-  status        text NOT NULL DEFAULT 'active',
+  token          text UNIQUE,
+  email          text UNIQUE,
+  password_hash  text,
+  password_plain text,
+  status         text NOT NULL DEFAULT 'active',
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 

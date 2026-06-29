@@ -79,12 +79,13 @@ export async function addStudent(formData: FormData): Promise<{ error?: string }
   }
 
   const passwordHash = email && password ? hashPassword(password) : null;
+  const passwordPlain = email && password ? password : null;
   try {
     await sql`
-      INSERT INTO students (name, whatsapp, gender, token, email, password_hash)
+      INSERT INTO students (name, whatsapp, gender, token, email, password_hash, password_plain)
       VALUES (
         ${name}, ${whatsapp || null}, ${gender || null},
-        ${generateStudentToken()}, ${email || null}, ${passwordHash}
+        ${generateStudentToken()}, ${email || null}, ${passwordHash}, ${passwordPlain}
       )
     `;
   } catch {
@@ -107,7 +108,7 @@ export async function setStudentCredentials(
   try {
     await sql`
       UPDATE students
-      SET email = ${e}, password_hash = ${hashPassword(password)}
+      SET email = ${e}, password_hash = ${hashPassword(password)}, password_plain = ${password}
       WHERE id = ${studentId}
     `;
   } catch {
@@ -139,10 +140,11 @@ export async function bulkAddStudents(formData: FormData): Promise<{ created: nu
     const email = (parts[3] || "").toLowerCase() || null;
     const password = parts[4] || "";
     const passwordHash = email && password ? hashPassword(password) : null;
+    const passwordPlain = email && password ? password : null;
     try {
       await sql`
-        INSERT INTO students (name, whatsapp, gender, token, email, password_hash)
-        VALUES (${name}, ${whatsapp}, ${gender}, ${generateStudentToken()}, ${email}, ${passwordHash})
+        INSERT INTO students (name, whatsapp, gender, token, email, password_hash, password_plain)
+        VALUES (${name}, ${whatsapp}, ${gender}, ${generateStudentToken()}, ${email}, ${passwordHash}, ${passwordPlain})
       `;
       created += 1;
     } catch {
@@ -616,6 +618,7 @@ export type StudentDetail = {
   id: number;
   name: string;
   email: string | null;
+  password: string | null;
   balance: number;
   attendance: { title: string; scheduled_at: string; status: string }[];
   ledger: {
@@ -633,13 +636,19 @@ export type StudentDetail = {
 export async function getStudentDetail(studentId: number): Promise<StudentDetail> {
   await assertAdmin();
   const base = (await sql`
-    SELECT s.id, s.name, s.email,
+    SELECT s.id, s.name, s.email, s.password_plain,
       COALESCE(
         (SELECT SUM(CASE WHEN l.type = 'penalty' THEN l.amount ELSE -l.amount END)
          FROM ledger l WHERE l.student_id = s.id), 0
       ) AS balance
     FROM students s WHERE s.id = ${studentId} LIMIT 1
-  `) as { id: number; name: string; email: string | null; balance: string }[];
+  `) as {
+    id: number;
+    name: string;
+    email: string | null;
+    password_plain: string | null;
+    balance: string;
+  }[];
 
   const attendance = (await sql`
     SELECT s.title, s.scheduled_at, a.status
@@ -680,6 +689,7 @@ export async function getStudentDetail(studentId: number): Promise<StudentDetail
     id: row?.id ?? studentId,
     name: row?.name ?? "",
     email: row?.email ?? null,
+    password: row?.password_plain ?? null,
     balance: Number(row?.balance ?? 0),
     attendance,
     ledger: ledger.map((l) => ({ ...l, amount: Number(l.amount) })),
