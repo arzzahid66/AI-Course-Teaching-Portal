@@ -21,6 +21,18 @@ export type Topic = {
   planned_at: string | null;
 };
 
+export type CurriculumWeek = {
+  id: number;
+  title: string;
+  part_a: string | null;
+  part_b: string | null;
+};
+
+export type Outcome = {
+  id: number;
+  body: string;
+};
+
 export type AssignmentWithStatus = {
   id: number;
   title: string;
@@ -65,6 +77,8 @@ export type PortalData = {
   nextClass: NextClass | null;
   attendance: AttendanceEntry[];
   topics: { upcoming: Topic[]; past: Topic[] };
+  curriculum: CurriculumWeek[];
+  outcomes: Outcome[];
   assignments: AssignmentWithStatus[];
   ledger: LedgerEntry[];
   questions: MyQuestion[];
@@ -176,6 +190,25 @@ export async function getPortalData(): Promise<PortalData> {
   const upcoming = allTopics.filter((t) => !t.is_covered);
   const past = allTopics.filter((t) => t.is_covered);
 
+  // Curriculum + outcomes are non-fatal: if migration_v5 hasn't run yet the
+  // tables won't exist, but that must not break the rest of the portal.
+  let curriculum: CurriculumWeek[] = [];
+  let outcomes: Outcome[] = [];
+  try {
+    curriculum = (await sql`
+      SELECT id, title, part_a, part_b
+      FROM curriculum_weeks
+      ORDER BY sort_order ASC, id ASC
+    `) as CurriculumWeek[];
+    outcomes = (await sql`
+      SELECT id, body
+      FROM course_outcomes
+      ORDER BY sort_order ASC, id ASC
+    `) as Outcome[];
+  } catch (e) {
+    console.error("[portal] curriculum/outcomes load failed:", e);
+  }
+
   const assignmentsRaw = (await sql`
     SELECT
       a.id, a.title, a.description, a.due_at,
@@ -210,6 +243,8 @@ export async function getPortalData(): Promise<PortalData> {
     nextClass,
     attendance,
     topics: { upcoming, past },
+    curriculum,
+    outcomes,
     assignments: assignmentsRaw,
     ledger: ledger.map((l) => ({ ...l, amount: Number(l.amount) })),
     questions,

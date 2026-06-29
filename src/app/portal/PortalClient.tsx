@@ -22,7 +22,7 @@ import {
   TUTOR_BIO,
 } from "@/lib/constants";
 
-type Tab = "class" | "topics" | "assignments" | "record" | "ask";
+type Tab = "class" | "course" | "topics" | "assignments" | "record" | "ask";
 
 function fmt(d: string | null): string {
   if (!d) return "";
@@ -71,15 +71,17 @@ export default function PortalClient({ data }: { data: PortalData }) {
           <HowToVideoCard />
         </>
       )}
+      {tab === "course" && <CourseTab data={data} />}
       {tab === "topics" && <TopicsTab data={data} />}
       {tab === "assignments" && <AssignmentsTab data={data} />}
       {tab === "record" && <RecordTab data={data} />}
       {tab === "ask" && <AskTab data={data} />}
 
       {/* Bottom tab bar (mobile-first) */}
-      <nav className="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-white border-t border-slate-200 grid grid-cols-5">
+      <nav className="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-white border-t border-slate-200 grid grid-cols-6">
         {([
           ["class", "Class", "🏫"],
+          ["course", "Course", "🎓"],
           ["topics", "Topics", "📚"],
           ["assignments", "Tasks", "📝"],
           ["record", "Record", "📊"],
@@ -518,6 +520,79 @@ function ClassTab({ data }: { data: PortalData }) {
         </button>
       </form>
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Course roadmap — what you'll learn (Part A / Part B) + outcomes
+// ---------------------------------------------------------------------------
+function CourseTab({ data }: { data: PortalData }) {
+  const { curriculum, outcomes } = data;
+
+  if (curriculum.length === 0 && outcomes.length === 0) {
+    return (
+      <Card>
+        <div className="text-center py-6">
+          <div className="text-4xl mb-2">🎓</div>
+          <h2 className="text-lg font-bold mb-1">Course roadmap</h2>
+          <p className="text-slate-500 text-sm">
+            Your course roadmap will appear here soon.
+          </p>
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <>
+      <Card>
+        <h2 className="font-bold mb-1">🎓 What you&apos;ll learn</h2>
+        <p className="text-slate-500 text-sm">
+          Here&apos;s the whole journey. Each week has{" "}
+          <span className="font-semibold text-brand-700">Part A</span> (for everyone — no laptop
+          needed) and <span className="font-semibold text-emerald-700">Part B</span> (bring your
+          laptop for hands-on building).
+        </p>
+      </Card>
+
+      {curriculum.map((w) => (
+        <Card key={w.id}>
+          <h3 className="font-bold mb-3">{w.title}</h3>
+          {w.part_a && (
+            <div className="rounded-xl border border-brand-100 bg-brand-50/60 p-3 mb-2">
+              <p className="text-xs font-bold uppercase tracking-wide text-brand-700 mb-1">
+                Part A · Everyone
+              </p>
+              <p className="text-sm text-slate-700 whitespace-pre-line">{w.part_a}</p>
+            </div>
+          )}
+          {w.part_b && (
+            <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-emerald-700 mb-1">
+                Part B · Bring your laptop
+              </p>
+              <p className="text-sm text-slate-700 whitespace-pre-line">{w.part_b}</p>
+            </div>
+          )}
+        </Card>
+      ))}
+
+      {outcomes.length > 0 && (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50/70 p-5 mb-4">
+          <h2 className="font-bold text-amber-900 mb-3">
+            🚀 After this course, you&apos;ll be able to…
+          </h2>
+          <ul className="space-y-2">
+            {outcomes.map((o) => (
+              <li key={o.id} className="flex items-start gap-2 text-sm text-amber-900/90">
+                <span className="shrink-0 mt-0.5">✅</span>
+                <span>{o.body}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </>
   );
 }
 

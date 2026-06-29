@@ -4,6 +4,8 @@ import {
   getOpenSessionWithAttendance,
   getRecentSessions,
   getTopics,
+  getCurriculum,
+  getOutcomes,
   getAssignmentMatrix,
   getDashboardStats,
   getQuestions,
@@ -50,6 +52,8 @@ export default async function AdminPage() {
     openSession,
     sessions,
     topics,
+    curriculum,
+    outcomes,
     assignmentMatrix,
     dashboardStats,
     questions,
@@ -58,6 +62,8 @@ export default async function AdminPage() {
     settle(getOpenSessionWithAttendance(), { session: null, attendees: [] }),
     settle(getRecentSessions(), []),
     settle(getTopics(), []),
+    settle(getCurriculum(), []),
+    settle(getOutcomes(), []),
     settle(getAssignmentMatrix(), { assignments: [], students: [], done: {} }),
     settle(getDashboardStats(), EMPTY_STATS),
     settle(getQuestions(), []),
@@ -70,6 +76,8 @@ export default async function AdminPage() {
       attendees={openSession.attendees}
       sessions={sessions}
       topics={topics}
+      curriculum={curriculum}
+      outcomes={outcomes}
       assignmentMatrix={assignmentMatrix}
       dashboardStats={dashboardStats}
       questions={questions}

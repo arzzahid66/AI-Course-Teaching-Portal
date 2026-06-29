@@ -19,6 +19,12 @@ import {
   createTopic,
   setTopicCovered,
   deleteTopic,
+  createCurriculumWeek,
+  updateCurriculumWeek,
+  deleteCurriculumWeek,
+  createOutcome,
+  updateOutcome,
+  deleteOutcome,
   createAssignment,
   updateAssignment,
   deleteAssignment,
@@ -34,6 +40,8 @@ import {
   type SessionRow,
   type AttendeeRow,
   type TopicRow,
+  type CurriculumWeekRow,
+  type OutcomeRow,
   type AssignmentMatrix,
   type AssignmentRow,
   type AssignmentStudent,
@@ -61,6 +69,7 @@ type Tab =
   | "sessions"
   | "payments"
   | "topics"
+  | "curriculum"
   | "assignments"
   | "questions";
 
@@ -70,6 +79,8 @@ export default function AdminDashboard({
   attendees,
   sessions,
   topics,
+  curriculum,
+  outcomes,
   assignmentMatrix,
   dashboardStats,
   questions,
@@ -79,6 +90,8 @@ export default function AdminDashboard({
   attendees: AttendeeRow[];
   sessions: SessionRow[];
   topics: TopicRow[];
+  curriculum: CurriculumWeekRow[];
+  outcomes: OutcomeRow[];
   assignmentMatrix: AssignmentMatrix;
   dashboardStats: DashboardStats;
   questions: QuestionRow[];
@@ -94,6 +107,7 @@ export default function AdminDashboard({
     ["sessions", "Sessions"],
     ["payments", "Payments"],
     ["topics", "Topics"],
+    ["curriculum", "Course"],
     ["assignments", "Tasks"],
     ["questions", "Questions"],
   ];
@@ -136,6 +150,7 @@ export default function AdminDashboard({
       )}
       {tab === "payments" && <PaymentsTab students={students} />}
       {tab === "topics" && <TopicsTab topics={topics} />}
+      {tab === "curriculum" && <CourseTab weeks={curriculum} outcomes={outcomes} />}
       {tab === "assignments" && <AssignmentsTab matrix={assignmentMatrix} />}
       {tab === "questions" && <QuestionsTab questions={questions} />}
     </main>
@@ -2297,6 +2312,384 @@ function AssignmentEditModal({
             Delete assignment
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Course (curriculum roadmap: weeks with Part A / Part B + outcomes)
+// ---------------------------------------------------------------------------
+function CourseTab({
+  weeks,
+  outcomes,
+}: {
+  weeks: CurriculumWeekRow[];
+  outcomes: OutcomeRow[];
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [editingWeek, setEditingWeek] = useState<CurriculumWeekRow | null>(null);
+  const [editingOutcome, setEditingOutcome] = useState<OutcomeRow | null>(null);
+  const weekRef = useRef<HTMLFormElement>(null);
+  const outcomeRef = useRef<HTMLFormElement>(null);
+
+  function onAddWeek(formData: FormData) {
+    setError(null);
+    start(async () => {
+      const res = await createCurriculumWeek(formData);
+      if (res.error) setError(res.error);
+      else weekRef.current?.reset();
+      router.refresh();
+    });
+  }
+
+  function onDeleteWeek(w: CurriculumWeekRow) {
+    if (!confirm(`Delete "${w.title}"? This removes it from every student's course view.`)) return;
+    setError(null);
+    start(async () => {
+      try {
+        const res = await deleteCurriculumWeek(w.id);
+        if (res.error) setError(res.error);
+        else router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not delete week.");
+      }
+    });
+  }
+
+  function onAddOutcome(formData: FormData) {
+    setError(null);
+    start(async () => {
+      const res = await createOutcome(formData);
+      if (res.error) setError(res.error);
+      else outcomeRef.current?.reset();
+      router.refresh();
+    });
+  }
+
+  function onDeleteOutcome(o: OutcomeRow) {
+    if (!confirm("Delete this outcome?")) return;
+    setError(null);
+    start(async () => {
+      try {
+        const res = await deleteOutcome(o.id);
+        if (res.error) setError(res.error);
+        else router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not delete outcome.");
+      }
+    });
+  }
+
+  return (
+    <>
+      <Card>
+        <h2 className="font-bold mb-1">Course roadmap</h2>
+        <p className="text-slate-500 text-sm mb-3">
+          What every student sees in their <span className="font-semibold">Course</span> tab. Each
+          week has a <span className="font-semibold">Part A</span> (everyone / no laptop) and a{" "}
+          <span className="font-semibold">Part B</span> (bring laptop).
+        </p>
+        {error && <p className="text-rose-600 text-sm">{error}</p>}
+      </Card>
+
+      <Card>
+        <h2 className="font-bold mb-3">Add week</h2>
+        <form ref={weekRef} action={onAddWeek} className="space-y-2">
+          <div className="grid grid-cols-[5rem_1fr] gap-2">
+            <input
+              name="sort_order"
+              type="number"
+              step="1"
+              defaultValue={weeks.length}
+              placeholder="Order"
+              className={fieldClass()}
+              title="Display order (0, 1, 2…)"
+            />
+            <input name="title" placeholder="Title (e.g. Week 1 — Prompting)" className={fieldClass()} />
+          </div>
+          <textarea
+            name="part_a"
+            rows={3}
+            placeholder="Part A — Everyone (no laptop): concepts & AI tools"
+            className={fieldClass()}
+          />
+          <textarea
+            name="part_b"
+            rows={3}
+            placeholder="Part B — Bring your laptop: hands-on building"
+            className={fieldClass()}
+          />
+          <button
+            type="submit"
+            disabled={pending}
+            className="w-full rounded-xl bg-brand-600 px-4 py-2.5 text-white font-semibold disabled:opacity-50"
+          >
+            Add week
+          </button>
+        </form>
+      </Card>
+
+      <Card>
+        <h2 className="font-bold mb-3">Weeks ({weeks.length})</h2>
+        <ul className="divide-y">
+          {weeks.map((w) => (
+            <li key={w.id} className="py-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-semibold">
+                    <span className="text-slate-400 font-normal mr-1">#{w.sort_order}</span>
+                    {w.title}
+                  </p>
+                  {w.part_a && (
+                    <p className="text-slate-600 text-sm mt-1 whitespace-pre-line">
+                      <span className="font-semibold text-brand-700">Part A:</span> {w.part_a}
+                    </p>
+                  )}
+                  {w.part_b && (
+                    <p className="text-slate-600 text-sm mt-1 whitespace-pre-line">
+                      <span className="font-semibold text-emerald-700">Part B:</span> {w.part_b}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => setEditingWeek(w)}
+                    className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => onDeleteWeek(w)}
+                    disabled={pending}
+                    className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1 disabled:opacity-50"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </li>
+          ))}
+          {weeks.length === 0 && (
+            <li className="py-4 text-center text-slate-400 text-sm">No weeks yet.</li>
+          )}
+        </ul>
+      </Card>
+
+      <Card>
+        <h2 className="font-bold mb-1">After-course outcomes</h2>
+        <p className="text-slate-500 text-sm mb-3">
+          Shown under <span className="font-semibold">&ldquo;After this course you can…&rdquo;</span>.
+        </p>
+        <form ref={outcomeRef} action={onAddOutcome} className="space-y-2 mb-4">
+          <div className="grid grid-cols-[5rem_1fr] gap-2">
+            <input
+              name="sort_order"
+              type="number"
+              step="1"
+              defaultValue={outcomes.length}
+              placeholder="Order"
+              className={fieldClass()}
+            />
+            <input name="body" placeholder="e.g. Build a working AI chatbot" className={fieldClass()} />
+          </div>
+          <button
+            type="submit"
+            disabled={pending}
+            className="w-full rounded-xl bg-slate-800 px-4 py-2.5 text-white font-semibold disabled:opacity-50"
+          >
+            Add outcome
+          </button>
+        </form>
+        <ul className="divide-y">
+          {outcomes.map((o) => (
+            <li key={o.id} className="flex items-start justify-between gap-2 py-2">
+              <p className="text-sm">
+                <span className="text-slate-400 mr-1">#{o.sort_order}</span>
+                {o.body}
+              </p>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setEditingOutcome(o)}
+                  className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => onDeleteOutcome(o)}
+                  disabled={pending}
+                  className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1 disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              </div>
+            </li>
+          ))}
+          {outcomes.length === 0 && (
+            <li className="py-4 text-center text-slate-400 text-sm">No outcomes yet.</li>
+          )}
+        </ul>
+      </Card>
+
+      {editingWeek && (
+        <CurriculumWeekEditModal week={editingWeek} onClose={() => setEditingWeek(null)} />
+      )}
+      {editingOutcome && (
+        <OutcomeEditModal outcome={editingOutcome} onClose={() => setEditingOutcome(null)} />
+      )}
+    </>
+  );
+}
+
+function CurriculumWeekEditModal({
+  week,
+  onClose,
+}: {
+  week: CurriculumWeekRow;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState<string | null>(null);
+
+  function onSave(formData: FormData) {
+    setMsg(null);
+    start(async () => {
+      try {
+        const res = await updateCurriculumWeek(week.id, formData);
+        if (res.error) {
+          setMsg(res.error);
+          return;
+        }
+        router.refresh();
+        onClose();
+      } catch (e) {
+        setMsg(e instanceof Error ? e.message : "Could not save week.");
+      }
+    });
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4 z-50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-bold">Edit week</h2>
+          <button onClick={onClose} className="text-slate-400 text-2xl leading-none">
+            ×
+          </button>
+        </div>
+
+        <form action={onSave} className="space-y-2">
+          <div className="grid grid-cols-[5rem_1fr] gap-2">
+            <input
+              name="sort_order"
+              type="number"
+              step="1"
+              defaultValue={week.sort_order}
+              className={fieldClass()}
+            />
+            <input name="title" defaultValue={week.title} placeholder="Title" className={fieldClass()} />
+          </div>
+          <textarea
+            name="part_a"
+            rows={4}
+            defaultValue={week.part_a ?? ""}
+            placeholder="Part A — Everyone (no laptop)"
+            className={fieldClass()}
+          />
+          <textarea
+            name="part_b"
+            rows={4}
+            defaultValue={week.part_b ?? ""}
+            placeholder="Part B — Bring your laptop"
+            className={fieldClass()}
+          />
+          <button
+            type="submit"
+            disabled={pending}
+            className="w-full rounded-xl bg-brand-600 px-4 py-2.5 text-white font-semibold disabled:opacity-50"
+          >
+            Save changes
+          </button>
+        </form>
+        {msg && <p className="text-sm mt-2 text-slate-600">{msg}</p>}
+      </div>
+    </div>
+  );
+}
+
+function OutcomeEditModal({
+  outcome,
+  onClose,
+}: {
+  outcome: OutcomeRow;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState<string | null>(null);
+
+  function onSave(formData: FormData) {
+    setMsg(null);
+    start(async () => {
+      try {
+        const res = await updateOutcome(outcome.id, formData);
+        if (res.error) {
+          setMsg(res.error);
+          return;
+        }
+        router.refresh();
+        onClose();
+      } catch (e) {
+        setMsg(e instanceof Error ? e.message : "Could not save outcome.");
+      }
+    });
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4 z-50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-bold">Edit outcome</h2>
+          <button onClick={onClose} className="text-slate-400 text-2xl leading-none">
+            ×
+          </button>
+        </div>
+
+        <form action={onSave} className="space-y-2">
+          <div className="grid grid-cols-[5rem_1fr] gap-2">
+            <input
+              name="sort_order"
+              type="number"
+              step="1"
+              defaultValue={outcome.sort_order}
+              className={fieldClass()}
+            />
+            <input name="body" defaultValue={outcome.body} placeholder="Outcome" className={fieldClass()} />
+          </div>
+          <button
+            type="submit"
+            disabled={pending}
+            className="w-full rounded-xl bg-brand-600 px-4 py-2.5 text-white font-semibold disabled:opacity-50"
+          >
+            Save changes
+          </button>
+        </form>
+        {msg && <p className="text-sm mt-2 text-slate-600">{msg}</p>}
       </div>
     </div>
   );

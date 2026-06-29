@@ -494,6 +494,148 @@ export async function deleteTopic(id: number): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Curriculum (course roadmap) — weeks with Part A / Part B + outcomes
+// ---------------------------------------------------------------------------
+export type CurriculumWeekRow = {
+  id: number;
+  sort_order: number;
+  title: string;
+  part_a: string | null;
+  part_b: string | null;
+};
+
+export type OutcomeRow = {
+  id: number;
+  sort_order: number;
+  body: string;
+};
+
+export async function getCurriculum(): Promise<CurriculumWeekRow[]> {
+  await assertAdmin();
+  return (await sql`
+    SELECT id, sort_order, title, part_a, part_b
+    FROM curriculum_weeks
+    ORDER BY sort_order ASC, id ASC
+  `) as CurriculumWeekRow[];
+}
+
+export async function createCurriculumWeek(formData: FormData): Promise<{ error?: string }> {
+  await assertAdmin();
+  const title = String(formData.get("title") ?? "").trim();
+  const partA = String(formData.get("part_a") ?? "").trim();
+  const partB = String(formData.get("part_b") ?? "").trim();
+  const sortOrder = Number(formData.get("sort_order"));
+  if (!title) return { error: "Title is required." };
+
+  await sql`
+    INSERT INTO curriculum_weeks (sort_order, title, part_a, part_b)
+    VALUES (${Number.isNaN(sortOrder) ? 0 : sortOrder}, ${title}, ${partA || null}, ${partB || null})
+  `;
+  revalidatePath("/admin");
+  return {};
+}
+
+export async function updateCurriculumWeek(
+  id: number,
+  formData: FormData
+): Promise<{ error?: string }> {
+  await assertAdmin();
+  const title = String(formData.get("title") ?? "").trim();
+  const partA = String(formData.get("part_a") ?? "").trim();
+  const partB = String(formData.get("part_b") ?? "").trim();
+  const sortOrder = Number(formData.get("sort_order"));
+  if (!title) return { error: "Title is required." };
+
+  try {
+    await sql`
+      UPDATE curriculum_weeks
+      SET sort_order = ${Number.isNaN(sortOrder) ? 0 : sortOrder},
+          title = ${title}, part_a = ${partA || null}, part_b = ${partB || null}
+      WHERE id = ${id}
+    `;
+  } catch (e) {
+    return {
+      error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save week.",
+    };
+  }
+  revalidatePath("/admin");
+  return {};
+}
+
+export async function deleteCurriculumWeek(id: number): Promise<{ error?: string }> {
+  await assertAdmin();
+  try {
+    await sql`DELETE FROM curriculum_weeks WHERE id = ${id}`;
+  } catch (e) {
+    return {
+      error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete week.",
+    };
+  }
+  revalidatePath("/admin");
+  return {};
+}
+
+export async function getOutcomes(): Promise<OutcomeRow[]> {
+  await assertAdmin();
+  return (await sql`
+    SELECT id, sort_order, body
+    FROM course_outcomes
+    ORDER BY sort_order ASC, id ASC
+  `) as OutcomeRow[];
+}
+
+export async function createOutcome(formData: FormData): Promise<{ error?: string }> {
+  await assertAdmin();
+  const body = String(formData.get("body") ?? "").trim();
+  const sortOrder = Number(formData.get("sort_order"));
+  if (!body) return { error: "Write the outcome first." };
+
+  await sql`
+    INSERT INTO course_outcomes (sort_order, body)
+    VALUES (${Number.isNaN(sortOrder) ? 0 : sortOrder}, ${body})
+  `;
+  revalidatePath("/admin");
+  return {};
+}
+
+export async function updateOutcome(
+  id: number,
+  formData: FormData
+): Promise<{ error?: string }> {
+  await assertAdmin();
+  const body = String(formData.get("body") ?? "").trim();
+  const sortOrder = Number(formData.get("sort_order"));
+  if (!body) return { error: "Write the outcome first." };
+
+  try {
+    await sql`
+      UPDATE course_outcomes
+      SET sort_order = ${Number.isNaN(sortOrder) ? 0 : sortOrder}, body = ${body}
+      WHERE id = ${id}
+    `;
+  } catch (e) {
+    return {
+      error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save outcome.",
+    };
+  }
+  revalidatePath("/admin");
+  return {};
+}
+
+export async function deleteOutcome(id: number): Promise<{ error?: string }> {
+  await assertAdmin();
+  try {
+    await sql`DELETE FROM course_outcomes WHERE id = ${id}`;
+  } catch (e) {
+    return {
+      error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete outcome.",
+    };
+  }
+  revalidatePath("/admin");
+  return {};
+}
+
+// ---------------------------------------------------------------------------
 // Assignments
 // ---------------------------------------------------------------------------
 export type AssignmentRow = {
