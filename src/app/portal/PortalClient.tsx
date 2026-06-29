@@ -14,6 +14,12 @@ import {
   PAYMENT_ACCOUNT_NAME,
   TUTOR_WHATSAPP_NUMBER,
   PORTAL_DEMO_YOUTUBE_ID,
+  TUTOR_NAME,
+  TUTOR_TITLE,
+  TUTOR_COMPANY,
+  TUTOR_LOCATION,
+  TUTOR_PHOTO,
+  TUTOR_BIO,
 } from "@/lib/constants";
 
 type Tab = "class" | "topics" | "assignments" | "record" | "ask";
@@ -31,6 +37,7 @@ function fmtDate(d: string | null): string {
 
 export default function PortalClient({ data }: { data: PortalData }) {
   const [tab, setTab] = useState<Tab>("class");
+  const [showBio, setShowBio] = useState(false);
 
   return (
     <main className="min-h-screen max-w-md mx-auto p-4 pb-24">
@@ -39,13 +46,23 @@ export default function PortalClient({ data }: { data: PortalData }) {
           <p className="text-slate-500 text-sm">Welcome</p>
           <h1 className="text-xl font-bold">{data.name}</h1>
         </div>
-        <button
-          onClick={() => studentLogout()}
-          className="text-sm text-slate-500 underline"
-        >
-          Log out
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowBio(true)}
+            className="flex items-center gap-1.5 rounded-full bg-brand-50 text-brand-700 text-sm font-semibold px-3 py-1.5 active:scale-[0.97] transition"
+          >
+            👤 About Teacher
+          </button>
+          <button
+            onClick={() => studentLogout()}
+            className="text-sm text-slate-500 underline"
+          >
+            Log out
+          </button>
+        </div>
       </header>
+
+      {showBio && <TutorBioModal onClose={() => setShowBio(false)} />}
 
       {tab === "class" && (
         <>
@@ -88,6 +105,90 @@ function Card({ children }: { children: React.ReactNode }) {
   return (
     <section className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-100 p-5 mb-4">
       {children}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// About your teacher — opened from the "About Teacher" button in the header
+// ---------------------------------------------------------------------------
+function TutorBioModal({ onClose }: { onClose: () => void }) {
+  // Close on Escape key for convenience.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-4"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl"
+      >
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          className="absolute top-3 right-3 z-10 grid h-8 w-8 place-items-center rounded-full bg-white/20 text-white text-lg leading-none active:scale-95 transition"
+        >
+          ✕
+        </button>
+        <TutorBioCard />
+      </div>
+    </div>
+  );
+}
+
+function TutorBioCard() {
+  const [imgFailed, setImgFailed] = useState(false);
+  const initials = TUTOR_NAME.split(" ")
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase();
+
+  const showPhoto = TUTOR_PHOTO && !imgFailed;
+
+  return (
+    <section className="rounded-2xl bg-gradient-to-br from-brand-600 to-brand-700 text-white shadow-sm p-5">
+      <div className="flex items-center gap-4">
+        {showPhoto ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={TUTOR_PHOTO}
+            alt={TUTOR_NAME}
+            onError={() => setImgFailed(true)}
+            className="h-20 w-20 shrink-0 rounded-2xl object-cover ring-2 ring-white/40"
+          />
+        ) : (
+          <div className="grid h-20 w-20 shrink-0 place-items-center rounded-2xl bg-white/15 text-2xl font-bold ring-2 ring-white/40">
+            {initials}
+          </div>
+        )}
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wide text-white/70">
+            Your teacher
+          </p>
+          <h2 className="text-lg font-bold leading-tight">{TUTOR_NAME}</h2>
+          <p className="text-sm text-white/90">
+            {TUTOR_TITLE}
+            {TUTOR_COMPANY && (
+              <>
+                {" "}
+                <span className="text-white/70">at</span>{" "}
+                <span className="font-semibold">{TUTOR_COMPANY}</span>
+              </>
+            )}
+          </p>
+          <p className="text-xs text-white/70">📍 {TUTOR_LOCATION}</p>
+        </div>
+      </div>
+      <p className="mt-4 text-sm leading-relaxed text-white/90">{TUTOR_BIO}</p>
     </section>
   );
 }
