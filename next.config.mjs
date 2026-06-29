@@ -6,6 +6,7 @@ const nextConfig = {
   turbopack: {},
 };
 
+
 export default withPWA({
   dest: "public",
   cacheOnFrontEndNav: true,
