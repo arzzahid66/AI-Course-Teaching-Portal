@@ -50,6 +50,7 @@ export default function PortalClient({ data }: { data: PortalData }) {
       {tab === "class" && (
         <>
           <ClassTab data={data} />
+          <FeePurposeNote />
           <HowToVideoCard />
         </>
       )}
@@ -87,6 +88,38 @@ function Card({ children }: { children: React.ReactNode }) {
   return (
     <section className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-100 p-5 mb-4">
       {children}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Why there is a late/absent fee (shown to every student on the Class tab)
+// ---------------------------------------------------------------------------
+function FeePurposeNote() {
+  return (
+    <section className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-5 mb-4">
+      <h2 className="font-bold text-emerald-800 mb-2">
+        💚 This course is 100% free — about the fee
+      </h2>
+      <div className="text-sm text-emerald-900/80 space-y-2 leading-relaxed">
+        <p>
+          You never pay anything to learn here. The small fee for{" "}
+          <span className="font-semibold">missing or being late</span> to a class is{" "}
+          <span className="font-semibold">not a charge for the course</span> — it only
+          exists to help all of us stay punctual and committed.
+        </p>
+        <p>
+          <span className="font-semibold">I don&apos;t keep a single rupee of it.</span> Every
+          amount collected goes into buying{" "}
+          <span className="font-semibold">premium (paid) AI tools and subscriptions</span> for
+          the whole class — the kind that are expensive to buy on your own. This way we all get
+          to use professional tools together.
+        </p>
+        <p className="text-emerald-700">
+          So if you&apos;re ever charged, that money comes straight back to you and your
+          classmates as better tools. 🙌 Just be on time and you&apos;ll never pay a thing.
+        </p>
+      </div>
     </section>
   );
 }
