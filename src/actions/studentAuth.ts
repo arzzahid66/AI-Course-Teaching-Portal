@@ -45,6 +45,7 @@ export async function studentLogin(
     role: "student",
     name: student.name,
     email: student.email,
+    isPwa: formData.get("is_pwa") === "true",
   });
   redirect("/portal");
 }

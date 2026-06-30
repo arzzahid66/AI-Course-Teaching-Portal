@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect, useRef } from "react";
 import { useFormStatus } from "react-dom";
 import { studentLogin } from "@/actions/studentAuth";
 
@@ -19,6 +19,15 @@ function SubmitButton() {
 
 export default function LoginForm() {
   const [state, formAction] = useActionState(studentLogin, {});
+  const pwaRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (pwaRef.current) {
+      pwaRef.current.value = window.matchMedia("(display-mode: standalone)").matches
+        ? "true"
+        : "false";
+    }
+  }, []);
 
   return (
     <main className="min-h-screen flex items-center justify-center p-5">
@@ -26,6 +35,7 @@ export default function LoginForm() {
         action={formAction}
         className="w-full max-w-sm rounded-3xl bg-white shadow-lg ring-1 ring-slate-100 p-7 space-y-4"
       >
+        <input ref={pwaRef} type="hidden" name="is_pwa" defaultValue="false" />
         <div className="text-center mb-2">
           <div className="text-4xl mb-2">🎓</div>
           <h1 className="text-xl font-bold">Student Login</h1>

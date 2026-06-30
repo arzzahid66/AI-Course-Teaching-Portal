@@ -1,4 +1,5 @@
 import Link from "next/link";
+import InstallButton from "./InstallButton";
 
 export default function HomePage() {
   return (
@@ -10,10 +11,15 @@ export default function HomePage() {
         check in, see topics, assignments, and their record. Tutors manage
         everything from the admin dashboard.
       </p>
+
       <div className="flex flex-col gap-3 w-full max-w-xs">
+        <InstallButton />
+
+        <div className="w-full h-px bg-slate-200 my-1" />
+
         <Link
           href="/login"
-          className="rounded-xl bg-brand-600 px-6 py-3 text-white font-semibold shadow-sm active:scale-[0.98] transition"
+          className="rounded-xl bg-indigo-600 px-6 py-3 text-white font-semibold shadow-sm active:scale-[0.98] transition"
         >
           Student login →
         </Link>

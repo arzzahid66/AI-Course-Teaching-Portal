@@ -32,6 +32,7 @@ export async function adminLogin(
     role: "admin",
     name: "Admin",
     email: email.trim() || process.env.ADMIN_EMAIL || null,
+    isPwa: formData.get("is_pwa") === "true",
   });
   revalidatePath("/admin");
   return {};
@@ -532,13 +533,14 @@ export type LoginLogRow = {
   email: string | null;
   ip: string | null;
   user_agent: string | null;
+  is_pwa: boolean;
   created_at: string;
 };
 
 export async function getLoginLogs(limit = 200): Promise<LoginLogRow[]> {
   await assertAdmin();
   return (await sql`
-    SELECT id, student_id, role, name, email, ip, user_agent, created_at
+    SELECT id, student_id, role, name, email, ip, user_agent, is_pwa, created_at
     FROM login_logs
     ORDER BY created_at DESC
     LIMIT ${limit}

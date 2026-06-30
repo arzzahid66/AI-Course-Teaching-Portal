@@ -2095,9 +2095,18 @@ function LogsTab({ logs }: { logs: LoginLogRow[] }) {
                 {last.name || "—"} <RoleBadge role={last.role} />
               </p>
               <p className="text-slate-500 text-sm truncate">{last.email || "no email"}</p>
-              <p className="text-slate-400 text-xs">
+              <p className="text-slate-400 text-xs flex items-center gap-1.5 flex-wrap">
                 {fmt(last.created_at)} · {deviceLabel(last.user_agent)}
                 {last.ip ? ` · ${last.ip}` : ""}
+                {last.is_pwa ? (
+                  <span className="inline-flex items-center gap-1 text-xs rounded-full bg-indigo-100 text-indigo-700 px-2 py-0.5 font-medium">
+                    📱 App
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-xs rounded-full bg-slate-100 text-slate-600 px-2 py-0.5 font-medium">
+                    🌐 Browser
+                  </span>
+                )}
               </p>
             </div>
           </div>
@@ -2166,7 +2175,18 @@ function LogsTab({ logs }: { logs: LoginLogRow[] }) {
                     {fmt(l.created_at)}
                   </td>
                   <td className="py-2 px-2 text-slate-500" title={l.user_agent ?? ""}>
-                    {deviceLabel(l.user_agent)}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {l.is_pwa ? (
+                        <span className="inline-flex items-center gap-1 text-xs rounded-full bg-indigo-100 text-indigo-700 px-2 py-0.5 font-medium">
+                          📱 App
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs rounded-full bg-slate-100 text-slate-600 px-2 py-0.5 font-medium">
+                          🌐 Browser
+                        </span>
+                      )}
+                      <span>{deviceLabel(l.user_agent)}</span>
+                    </div>
                     {l.ip && <span className="block text-xs text-slate-400">{l.ip}</span>}
                   </td>
                 </tr>
