@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { saveAdminSubscription } from "@/actions/push";
+import { usePushSubscription } from "@/lib/usePushSubscription";
 import {
   addStudent,
   bulkAddStudents,
@@ -104,6 +106,8 @@ export default function AdminDashboard({
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
   const router = useRouter();
+  const saveSub = useCallback(saveAdminSubscription, []);
+  usePushSubscription(saveSub);
 
   const openQuestions = questions.filter((q) => q.status === "open").length;
 

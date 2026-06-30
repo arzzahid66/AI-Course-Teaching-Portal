@@ -3,6 +3,7 @@
 import { sql } from "@/lib/db";
 import { requireStudentId } from "@/lib/auth";
 import { CHECKIN_WINDOW_MIN } from "@/lib/constants";
+import { notifyAdmin } from "@/lib/pushNotifications";
 
 // ---------------------------------------------------------------------------
 // Types returned to the client. The session code and Meet link are NEVER
@@ -270,6 +271,14 @@ export async function submitQuestion(formData: FormData): Promise<{ error?: stri
   } catch {
     return { error: "Could not send your question. Please try again." };
   }
+
+  // Notify admin — best effort, never blocks the response
+  notifyAdmin({
+    title: "New Question",
+    body: subject ? `${subject}: ${body.slice(0, 80)}` : body.slice(0, 100),
+    url: "/admin",
+  }).catch(() => {});
+
   return {};
 }
 

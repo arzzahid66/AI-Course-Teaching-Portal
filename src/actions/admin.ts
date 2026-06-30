@@ -13,6 +13,7 @@ import {
 } from "@/lib/auth";
 import { MISSED_CLASS_PENALTY, MISSED_CLASS_REASON } from "@/lib/constants";
 import { recordLoginLog } from "@/lib/loginLog";
+import { notifyStudent } from "@/lib/pushNotifications";
 
 // ---------------------------------------------------------------------------
 // Auth
@@ -1136,11 +1137,21 @@ export async function answerQuestion(
   const answer = String(formData.get("answer") ?? "").trim();
   if (!answer) return { error: "Write a reply first." };
   try {
-    await sql`
+    const rows = (await sql`
       UPDATE questions
       SET answer = ${answer}, status = 'resolved', answered_at = now()
       WHERE id = ${id}
-    `;
+      RETURNING student_id, subject, body
+    `) as { student_id: number; subject: string | null; body: string }[];
+
+    const q = rows[0];
+    if (q?.student_id) {
+      notifyStudent(q.student_id, {
+        title: "Your question was answered!",
+        body: q.subject ? `Re: ${q.subject} — ${answer.slice(0, 80)}` : answer.slice(0, 100),
+        url: "/portal",
+      }).catch(() => {});
+    }
   } catch (e) {
     return {
       error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save reply.",

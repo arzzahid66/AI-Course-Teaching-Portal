@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   checkIn,
@@ -9,6 +9,8 @@ import {
   type NextClass,
 } from "@/actions/student";
 import { studentLogout } from "@/actions/studentAuth";
+import { saveStudentSubscription } from "@/actions/push";
+import { usePushSubscription } from "@/lib/usePushSubscription";
 import {
   PAYMENT_EASYPAISA_NUMBER,
   PAYMENT_ACCOUNT_NAME,
@@ -39,6 +41,8 @@ function fmtDate(d: string | null): string {
 export default function PortalClient({ data }: { data: PortalData }) {
   const [tab, setTab] = useState<Tab>("class");
   const [showBio, setShowBio] = useState(false);
+  const saveSub = useCallback(saveStudentSubscription, []);
+  usePushSubscription(saveSub);
 
   return (
     <main className="min-h-screen max-w-md mx-auto p-4 pb-24">
