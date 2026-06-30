@@ -15,7 +15,6 @@ export function usePushSubscription(saveFn: SaveFn) {
       const reg = await navigator.serviceWorker.ready;
       const existing = await reg.pushManager.getSubscription();
       if (existing) {
-        // Refresh the subscription in DB in case it changed
         await saveFn({
           endpoint: existing.endpoint,
           keys: {
@@ -29,9 +28,10 @@ export function usePushSubscription(saveFn: SaveFn) {
       const permission = await Notification.requestPermission();
       if (permission !== "granted") return;
 
-      const sub = await reg.pushManager.subscribe({
+      // PushManager accepts base64url string directly
+      const sub = await (reg.pushManager.subscribe as (o: object) => Promise<PushSubscription>)({
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey!),
+        applicationServerKey: publicKey,
       });
 
       const key = sub.getKey("p256dh");
@@ -49,12 +49,4 @@ export function usePushSubscription(saveFn: SaveFn) {
 
     subscribe().catch(() => {});
   }, [saveFn]);
-}
-
-function urlBase64ToUint8Array(base64String: string): ArrayBuffer {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const rawData = atob(base64);
-  const arr = new Uint8Array([...rawData].map((c) => c.charCodeAt(0)));
-  return arr.buffer as ArrayBuffer;
 }
