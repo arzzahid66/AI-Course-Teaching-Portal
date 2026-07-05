@@ -64,6 +64,23 @@ export const MISSED_CLASS_REASON = "Missed class";
 export const CHECKIN_WINDOW_MIN = 30;
 
 // ---------------------------------------------------------------------------
+// Quiz (MCQ modules) defaults. Used to pre-fill the admin create-quiz form and
+// to size a re-attempt grant. Each quiz stores its own final values in the DB.
+// ---------------------------------------------------------------------------
+
+/** Default total time limit (minutes) suggested when creating a new quiz. */
+export const QUIZ_DEFAULT_TIME_MIN = 10;
+
+/** Default pass mark (%) suggested when creating a new quiz. */
+export const QUIZ_DEFAULT_PASS_PERCENT = 50;
+
+/** Default number of attempts a student gets per quiz. */
+export const QUIZ_DEFAULT_MAX_ATTEMPTS = 2;
+
+/** How many fresh attempts an approved re-attempt request grants. */
+export const QUIZ_REATTEMPT_GRANT = 2;
+
+// ---------------------------------------------------------------------------
 // Payment details shown to a blocked student (so they can clear their dues).
 // Change these to your own numbers.
 // ---------------------------------------------------------------------------

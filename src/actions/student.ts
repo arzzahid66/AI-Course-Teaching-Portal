@@ -9,6 +9,7 @@ import {
   type ResourceLink,
 } from "@/lib/constants";
 import { notifyAdmin } from "@/lib/pushNotifications";
+import { getStudentQuizzes, type StudentQuiz } from "@/actions/quiz";
 
 // ---------------------------------------------------------------------------
 // Types returned to the client. The session code and Meet link are NEVER
@@ -83,6 +84,17 @@ export type MyQuestion = {
   answered_at: string | null;
 };
 
+export type LeaveRequest = {
+  id: number;
+  lesson_title: string | null;
+  lesson_at: string | null;
+  reason: string;
+  status: "pending" | "approved" | "rejected";
+  feedback: string | null;
+  created_at: string;
+  reviewed_at: string | null;
+};
+
 export type PortalData = {
   name: string;
   email: string | null;
@@ -97,6 +109,8 @@ export type PortalData = {
   assignments: AssignmentWithStatus[];
   ledger: LedgerEntry[];
   questions: MyQuestion[];
+  leaves: LeaveRequest[];
+  quizzes: StudentQuiz[];
 };
 
 export type CheckInResult =
@@ -137,6 +151,26 @@ async function getNextClass(): Promise<NextClass | null> {
     ORDER BY scheduled_at ASC
     LIMIT 1
   `) as NextClass[];
+  return rows[0] ?? null;
+}
+
+/**
+ * Like getNextClass but also returns the session id — used server-side to tie a
+ * leave request to the upcoming class (and to block duplicate pending requests
+ * for the same one). Never sent to the client.
+ */
+async function getNextClassForLeave(): Promise<{
+  id: number;
+  title: string;
+  scheduled_at: string;
+} | null> {
+  const rows = (await sql`
+    SELECT id, title, scheduled_at
+    FROM sessions
+    WHERE is_open = false AND closed_at IS NULL
+    ORDER BY scheduled_at ASC
+    LIMIT 1
+  `) as { id: number; title: string; scheduled_at: string }[];
   return rows[0] ?? null;
 }
 
@@ -281,6 +315,30 @@ export async function getPortalData(): Promise<PortalData> {
     LIMIT 50
   `) as MyQuestion[];
 
+  // Leave requests are non-fatal: the `leave_requests` table only exists once
+  // its migration (v10) has run — a missing table must not break the portal.
+  let leaves: LeaveRequest[] = [];
+  try {
+    leaves = (await sql`
+      SELECT id, lesson_title, lesson_at, reason, status, feedback, created_at, reviewed_at
+      FROM leave_requests
+      WHERE student_id = ${studentId}
+      ORDER BY created_at DESC
+      LIMIT 50
+    `) as LeaveRequest[];
+  } catch (e) {
+    console.error("[portal] leaves load failed:", e);
+  }
+
+  // Quizzes are non-fatal too: the quiz_* tables only exist once migration v11
+  // has run. A missing table must not break the portal.
+  let quizzes: StudentQuiz[] = [];
+  try {
+    quizzes = await getStudentQuizzes();
+  } catch (e) {
+    console.error("[portal] quizzes load failed:", e);
+  }
+
   return {
     name,
     email,
@@ -295,7 +353,63 @@ export async function getPortalData(): Promise<PortalData> {
     assignments: assignmentsRaw,
     ledger: ledger.map((l) => ({ ...l, amount: Number(l.amount) })),
     questions,
+    leaves,
+    quizzes,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Request leave from the next class (student → tutor)
+// ---------------------------------------------------------------------------
+export async function submitLeaveRequest(
+  formData: FormData
+): Promise<{ error?: string }> {
+  const studentId = await requireStudentId();
+  const reason = String(formData.get("reason") ?? "").trim();
+
+  if (!reason) return { error: "Please tell your tutor why you need leave." };
+  if (reason.length > 1000) {
+    return { error: "Reason is too long (max 1000 characters)." };
+  }
+
+  // Tie the request to the next scheduled class (if one exists) and snapshot its
+  // title + time so the record stays meaningful even if the session changes.
+  const next = await getNextClassForLeave();
+
+  // Only one pending request per upcoming class — don't let a student spam it.
+  if (next) {
+    const dupe = (await sql`
+      SELECT 1 FROM leave_requests
+      WHERE student_id = ${studentId}
+        AND session_id = ${next.id}
+        AND status = 'pending'
+      LIMIT 1
+    `) as unknown[];
+    if (dupe.length > 0) {
+      return { error: "You already have a pending leave request for the next class." };
+    }
+  }
+
+  try {
+    await sql`
+      INSERT INTO leave_requests (student_id, session_id, lesson_title, lesson_at, reason)
+      VALUES (
+        ${studentId}, ${next?.id ?? null}, ${next?.title ?? null},
+        ${next?.scheduled_at ?? null}, ${reason}
+      )
+    `;
+  } catch {
+    return { error: "Could not send your leave request. Please try again." };
+  }
+
+  // Notify admin — best effort, never blocks the response.
+  notifyAdmin({
+    title: "New Leave Request",
+    body: next?.title ? `${next.title}: ${reason.slice(0, 80)}` : reason.slice(0, 100),
+    url: "/admin",
+  }).catch(() => {});
+
+  return {};
 }
 
 // ---------------------------------------------------------------------------

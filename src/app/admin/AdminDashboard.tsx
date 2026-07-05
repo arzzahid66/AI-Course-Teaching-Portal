@@ -41,6 +41,8 @@ import {
   answerQuestion,
   setQuestionStatus,
   deleteQuestion,
+  reviewLeaveRequest,
+  deleteLeaveRequest,
   clearLoginLogs,
   adminLogout,
   type StudentRow,
@@ -56,8 +58,27 @@ import {
   type StudentDetail,
   type DashboardStats,
   type QuestionRow,
+  type LeaveRow,
   type LoginLogRow,
 } from "@/actions/admin";
+import {
+  createQuiz,
+  updateQuiz,
+  setQuizPublished,
+  deleteQuiz,
+  saveQuestion,
+  deleteQuizQuestion,
+  getQuizDetail,
+  getQuizResults,
+  reviewQuizReattemptRequest,
+  deleteQuizReattemptRequest,
+  type AdminQuizRow,
+  type QuizDetail,
+  type AdminQuizQuestion,
+  type QuizReattemptRow,
+  type QuizScoreboard,
+  type QuizResultRow,
+} from "@/actions/quiz";
 import {
   ResponsiveContainer,
   BarChart,
@@ -71,7 +92,12 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import { parseResourceLinks } from "@/lib/constants";
+import {
+  parseResourceLinks,
+  QUIZ_DEFAULT_TIME_MIN,
+  QUIZ_DEFAULT_PASS_PERCENT,
+  QUIZ_DEFAULT_MAX_ATTEMPTS,
+} from "@/lib/constants";
 
 type Tab =
   | "dashboard"
@@ -82,7 +108,9 @@ type Tab =
   | "curriculum"
   | "library"
   | "assignments"
+  | "quiz"
   | "questions"
+  | "leave"
   | "logs";
 
 export default function AdminDashboard({
@@ -97,6 +125,10 @@ export default function AdminDashboard({
   assignmentMatrix,
   dashboardStats,
   questions,
+  leaves,
+  quizzes,
+  quizRequests,
+  quizScoreboard,
   loginLogs,
 }: {
   students: StudentRow[];
@@ -110,6 +142,10 @@ export default function AdminDashboard({
   assignmentMatrix: AssignmentMatrix;
   dashboardStats: DashboardStats;
   questions: QuestionRow[];
+  leaves: LeaveRow[];
+  quizzes: AdminQuizRow[];
+  quizRequests: QuizReattemptRow[];
+  quizScoreboard: QuizScoreboard;
   loginLogs: LoginLogRow[];
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
@@ -118,6 +154,8 @@ export default function AdminDashboard({
   usePushSubscription(saveSub);
 
   const openQuestions = questions.filter((q) => q.status === "open").length;
+  const pendingLeaves = leaves.filter((l) => l.status === "pending").length;
+  const pendingQuizReqs = quizRequests.filter((r) => r.status === "pending").length;
 
   const tabs: [Tab, string][] = [
     ["dashboard", "Dashboard"],
@@ -128,7 +166,9 @@ export default function AdminDashboard({
     ["curriculum", "Course"],
     ["library", "Library"],
     ["assignments", "Tasks"],
+    ["quiz", "Quiz"],
     ["questions", "Questions"],
+    ["leave", "Leave"],
     ["logs", "Logs"],
   ];
 
@@ -159,6 +199,16 @@ export default function AdminDashboard({
                 {openQuestions}
               </span>
             )}
+            {t === "leave" && pendingLeaves > 0 && (
+              <span className="ml-1 inline-flex items-center justify-center rounded-full bg-rose-500 text-white text-[10px] font-bold min-w-[18px] h-[18px] px-1 align-middle">
+                {pendingLeaves}
+              </span>
+            )}
+            {t === "quiz" && pendingQuizReqs > 0 && (
+              <span className="ml-1 inline-flex items-center justify-center rounded-full bg-rose-500 text-white text-[10px] font-bold min-w-[18px] h-[18px] px-1 align-middle">
+                {pendingQuizReqs}
+              </span>
+            )}
           </button>
         ))}
       </nav>
@@ -173,7 +223,11 @@ export default function AdminDashboard({
       {tab === "curriculum" && <CourseTab weeks={curriculum} outcomes={outcomes} />}
       {tab === "library" && <LibraryTab resources={resources} />}
       {tab === "assignments" && <AssignmentsTab matrix={assignmentMatrix} />}
+      {tab === "quiz" && (
+        <QuizTab quizzes={quizzes} requests={quizRequests} scoreboard={quizScoreboard} />
+      )}
       {tab === "questions" && <QuestionsTab questions={questions} />}
+      {tab === "leave" && <LeaveTab leaves={leaves} />}
       {tab === "logs" && <LogsTab logs={loginLogs} />}
     </main>
   );
@@ -3473,5 +3527,969 @@ function QuestionItem({ q }: { q: QuestionRow }) {
       )}
       {error && <p className="text-rose-600 text-xs mt-1">{error}</p>}
     </li>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Leave (students appeal for an absence; tutor approves / rejects + feedback)
+// ---------------------------------------------------------------------------
+function LeaveTab({ leaves }: { leaves: LeaveRow[] }) {
+  const pending = leaves.filter((l) => l.status === "pending");
+  const decided = leaves.filter((l) => l.status !== "pending");
+
+  return (
+    <>
+      <Card>
+        <div className="flex items-center justify-between">
+          <h2 className="font-bold">Leave requests</h2>
+          <span className="text-xs rounded-full bg-amber-100 text-amber-700 px-2.5 py-1 font-semibold">
+            {pending.length} waiting
+          </span>
+        </div>
+        <p className="text-slate-500 text-sm mt-1">
+          Absence appeals students sent before a class. Approve or reject each one
+          and leave a note — the student sees your decision on their Leave tab.
+        </p>
+      </Card>
+
+      <Card>
+        <h2 className="font-bold mb-3">🌴 Waiting for a decision ({pending.length})</h2>
+        <ul className="divide-y">
+          {pending.map((l) => (
+            <LeaveItem key={l.id} leave={l} />
+          ))}
+          {pending.length === 0 && (
+            <li className="py-6 text-center text-slate-400 text-sm">
+              Nothing waiting — you&apos;re all caught up. 🎉
+            </li>
+          )}
+        </ul>
+      </Card>
+
+      <Card>
+        <h2 className="font-bold mb-3">✅ Reviewed ({decided.length})</h2>
+        <ul className="divide-y">
+          {decided.map((l) => (
+            <LeaveItem key={l.id} leave={l} />
+          ))}
+          {decided.length === 0 && (
+            <li className="py-4 text-center text-slate-400 text-sm">
+              Nothing reviewed yet.
+            </li>
+          )}
+        </ul>
+      </Card>
+    </>
+  );
+}
+
+function LeaveItem({ leave }: { leave: LeaveRow }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [feedback, setFeedback] = useState(leave.feedback ?? "");
+  const [error, setError] = useState<string | null>(null);
+
+  const statusMeta: Record<LeaveRow["status"], { label: string; chip: string }> = {
+    pending: { label: "pending", chip: "bg-amber-100 text-amber-700" },
+    approved: { label: "approved", chip: "bg-emerald-100 text-emerald-700" },
+    rejected: { label: "rejected", chip: "bg-rose-100 text-rose-700" },
+  };
+  const meta = statusMeta[leave.status];
+
+  function review(status: "approved" | "rejected" | "pending") {
+    setError(null);
+    const fd = new FormData();
+    fd.set("status", status);
+    fd.set("feedback", feedback);
+    start(async () => {
+      const res = await reviewLeaveRequest(leave.id, fd);
+      if (res.error) {
+        setError(res.error);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  function onDelete() {
+    if (!confirm("Delete this leave request permanently?")) return;
+    setError(null);
+    start(async () => {
+      const res = await deleteLeaveRequest(leave.id);
+      if (res.error) {
+        setError(res.error);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  return (
+    <li className="py-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-semibold">{leave.student_name}</p>
+          <p className="text-slate-400 text-xs break-all">
+            {leave.student_email || "no email on file"} · sent {fmt(leave.created_at)}
+          </p>
+        </div>
+        <span
+          className={`shrink-0 text-xs rounded-full px-2 py-0.5 font-medium ${meta.chip}`}
+        >
+          {meta.label}
+        </span>
+      </div>
+
+      <p className="mt-2 text-xs font-semibold text-brand-700">
+        {leave.lesson_title ? (
+          <>
+            {leave.lesson_title}
+            {leave.lesson_at && (
+              <span className="text-slate-400 font-normal"> · {fmt(leave.lesson_at)}</span>
+            )}
+          </>
+        ) : (
+          <span className="text-slate-400">General leave (no class linked)</span>
+        )}
+      </p>
+      <p className="mt-1 text-sm whitespace-pre-line">{leave.reason}</p>
+
+      <textarea
+        value={feedback}
+        onChange={(e) => setFeedback(e.target.value)}
+        rows={2}
+        placeholder="Feedback for the student (optional)"
+        className={fieldClass() + " mt-2"}
+      />
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => review("approved")}
+          disabled={pending}
+          className="text-xs rounded-lg bg-emerald-600 text-white px-3 py-1.5 font-semibold disabled:opacity-50"
+        >
+          Approve
+        </button>
+        <button
+          onClick={() => review("rejected")}
+          disabled={pending}
+          className="text-xs rounded-lg bg-rose-600 text-white px-3 py-1.5 font-semibold disabled:opacity-50"
+        >
+          Reject
+        </button>
+        <button
+          onClick={() => review("pending")}
+          disabled={pending}
+          className="text-xs rounded-lg border border-slate-300 text-slate-600 px-2 py-1.5 disabled:opacity-50"
+          title="Save the note without approving or rejecting yet"
+        >
+          Save note only
+        </button>
+        <button
+          onClick={onDelete}
+          disabled={pending}
+          className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1.5 disabled:opacity-50 ml-auto"
+        >
+          Delete
+        </button>
+      </div>
+      {error && <p className="text-rose-600 text-xs mt-1">{error}</p>}
+    </li>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Quiz (MCQ modules) — authoring, gradebook + re-attempt requests
+// ---------------------------------------------------------------------------
+function QuizTab({
+  quizzes,
+  requests,
+  scoreboard,
+}: {
+  quizzes: AdminQuizRow[];
+  requests: QuizReattemptRow[];
+  scoreboard: QuizScoreboard;
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const createRef = useRef<HTMLFormElement>(null);
+
+  const pendingReqs = requests.filter((r) => r.status === "pending");
+  const decidedReqs = requests.filter((r) => r.status !== "pending");
+
+  function onCreate(formData: FormData) {
+    setError(null);
+    start(async () => {
+      const res = await createQuiz(formData);
+      if (res.error) setError(res.error);
+      else createRef.current?.reset();
+      router.refresh();
+    });
+  }
+
+  function onDelete(q: AdminQuizRow) {
+    if (
+      !confirm(
+        `Delete quiz "${q.title}"? This removes its questions and every student's attempts. This cannot be undone.`
+      )
+    )
+      return;
+    setError(null);
+    start(async () => {
+      const res = await deleteQuiz(q.id);
+      if (res.error) setError(res.error);
+      router.refresh();
+    });
+  }
+
+  return (
+    <>
+      <Card>
+        <h2 className="font-bold mb-3">Create quiz</h2>
+        <form ref={createRef} action={onCreate} className="space-y-2">
+          <input name="title" placeholder="Title (e.g. AI Basics)" className={fieldClass()} />
+          <textarea
+            name="description"
+            rows={2}
+            placeholder="Short description (optional)"
+            className={fieldClass()}
+          />
+          <div className="grid grid-cols-3 gap-2">
+            <label className="text-xs text-slate-500">
+              Time (min)
+              <input
+                name="time_limit_min"
+                type="number"
+                min="1"
+                step="1"
+                defaultValue={QUIZ_DEFAULT_TIME_MIN}
+                className={fieldClass()}
+              />
+            </label>
+            <label className="text-xs text-slate-500">
+              Pass %
+              <input
+                name="pass_percent"
+                type="number"
+                min="0"
+                max="100"
+                step="1"
+                defaultValue={QUIZ_DEFAULT_PASS_PERCENT}
+                className={fieldClass()}
+              />
+            </label>
+            <label className="text-xs text-slate-500">
+              Attempts
+              <input
+                name="max_attempts"
+                type="number"
+                min="1"
+                step="1"
+                defaultValue={QUIZ_DEFAULT_MAX_ATTEMPTS}
+                className={fieldClass()}
+              />
+            </label>
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input name="is_published" type="checkbox" className="h-4 w-4 accent-brand-600" />
+            Publish now (students can see &amp; attempt it)
+          </label>
+          <input name="sort_order" type="hidden" defaultValue={quizzes.length} />
+          <button
+            type="submit"
+            disabled={pending}
+            className="w-full rounded-xl bg-brand-600 px-4 py-2.5 text-white font-semibold disabled:opacity-50"
+          >
+            Create quiz
+          </button>
+        </form>
+        <p className="text-slate-400 text-xs mt-2">
+          Create it first, then open it to add questions. Publish once it&apos;s ready.
+        </p>
+        {error && <p className="text-rose-600 text-sm mt-2">{error}</p>}
+      </Card>
+
+      <Card>
+        <h2 className="font-bold mb-3">Quizzes ({quizzes.length})</h2>
+        <ul className="divide-y">
+          {quizzes.map((q) => (
+            <li key={q.id} className="flex items-center justify-between gap-2 py-2.5">
+              <div className="min-w-0">
+                <p className="font-medium truncate">{q.title}</p>
+                <p className="text-slate-400 text-xs">
+                  {q.question_count} Qs · {Math.round(q.time_limit_sec / 60)} min · pass{" "}
+                  {q.pass_percent}% · {q.attempt_count} attempts
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() =>
+                    start(async () => {
+                      await setQuizPublished(q.id, !q.is_published);
+                      router.refresh();
+                    })
+                  }
+                  className={`text-xs rounded-full px-2 py-0.5 ${
+                    q.is_published
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-slate-200 text-slate-600"
+                  }`}
+                  title="Click to toggle"
+                >
+                  {q.is_published ? "published" : "draft"}
+                </button>
+                <button
+                  onClick={() => setEditingId(q.id)}
+                  className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => onDelete(q)}
+                  disabled={pending}
+                  className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1 disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              </div>
+            </li>
+          ))}
+          {quizzes.length === 0 && (
+            <li className="py-6 text-center text-slate-400 text-sm">No quizzes yet.</li>
+          )}
+        </ul>
+      </Card>
+
+      <QuizScoreboardCard scoreboard={scoreboard} />
+
+      <Card>
+        <div className="flex items-center justify-between">
+          <h2 className="font-bold">Re-attempt requests</h2>
+          <span className="text-xs rounded-full bg-amber-100 text-amber-700 px-2.5 py-1 font-semibold">
+            {pendingReqs.length} waiting
+          </span>
+        </div>
+        <p className="text-slate-500 text-sm mt-1 mb-3">
+          Students who used all their attempts and asked to try again. Approving grants
+          them 2 fresh attempts.
+        </p>
+        <ul className="divide-y">
+          {pendingReqs.map((r) => (
+            <QuizRequestItem key={r.id} req={r} />
+          ))}
+          {pendingReqs.length === 0 && (
+            <li className="py-6 text-center text-slate-400 text-sm">
+              Nothing waiting — all caught up. 🎉
+            </li>
+          )}
+        </ul>
+        {decidedReqs.length > 0 && (
+          <>
+            <h3 className="font-semibold text-sm mt-4 mb-2 text-slate-600">
+              Reviewed ({decidedReqs.length})
+            </h3>
+            <ul className="divide-y">
+              {decidedReqs.map((r) => (
+                <QuizRequestItem key={r.id} req={r} />
+              ))}
+            </ul>
+          </>
+        )}
+      </Card>
+
+      {editingId != null && (
+        <QuizEditModal quizId={editingId} onClose={() => setEditingId(null)} />
+      )}
+    </>
+  );
+}
+
+/** Gradebook grid: every active student × every quiz, showing their last %. */
+function QuizScoreboardCard({ scoreboard }: { scoreboard: QuizScoreboard }) {
+  const { quizzes, students, scores } = scoreboard;
+
+  return (
+    <Card>
+      <h2 className="font-bold mb-1">Scores</h2>
+      <p className="text-slate-500 text-sm mb-3">
+        Each student&apos;s last score per topic. Green = passed, red = failed, — = not
+        attempted.
+      </p>
+      {quizzes.length === 0 || students.length === 0 ? (
+        <p className="text-slate-400 text-sm">
+          {quizzes.length === 0 ? "No quizzes yet." : "No active students."}
+        </p>
+      ) : (
+        <div className="overflow-x-auto -mx-2">
+          <table className="text-sm border-collapse">
+            <thead>
+              <tr>
+                <th className="sticky left-0 bg-white text-left py-2 px-2 z-10">Student</th>
+                {quizzes.map((q) => (
+                  <th key={q.id} className="py-2 px-2 align-bottom">
+                    <span className="whitespace-nowrap max-w-[120px] truncate block">
+                      {q.title}
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {students.map((s) => (
+                <tr key={s.id} className="border-t">
+                  <td className="sticky left-0 bg-white py-1.5 px-2 font-medium whitespace-nowrap z-10">
+                    {s.name}
+                  </td>
+                  {quizzes.map((q) => {
+                    const cell = scores[`${q.id}:${s.id}`];
+                    if (!cell || cell.attemptsUsed === 0) {
+                      return (
+                        <td key={q.id} className="py-1.5 px-2 text-center text-slate-300">
+                          —
+                        </td>
+                      );
+                    }
+                    return (
+                      <td key={q.id} className="py-1.5 px-2 text-center">
+                        <span
+                          className={`inline-block rounded-lg px-2 py-0.5 text-xs font-semibold ${
+                            cell.passed
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-rose-100 text-rose-700"
+                          }`}
+                          title={`${cell.attemptsUsed} attempt(s)`}
+                        >
+                          {cell.lastPercent}%
+                        </span>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function QuizRequestItem({ req }: { req: QuizReattemptRow }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [feedback, setFeedback] = useState(req.feedback ?? "");
+  const [error, setError] = useState<string | null>(null);
+
+  const meta: Record<QuizReattemptRow["status"], { label: string; chip: string }> = {
+    pending: { label: "pending", chip: "bg-amber-100 text-amber-700" },
+    approved: { label: "approved", chip: "bg-emerald-100 text-emerald-700" },
+    rejected: { label: "rejected", chip: "bg-rose-100 text-rose-700" },
+  };
+  const m = meta[req.status];
+
+  function review(status: "approved" | "rejected" | "pending") {
+    setError(null);
+    const fd = new FormData();
+    fd.set("status", status);
+    fd.set("feedback", feedback);
+    start(async () => {
+      const res = await reviewQuizReattemptRequest(req.id, fd);
+      if (res.error) {
+        setError(res.error);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  function onDelete() {
+    if (!confirm("Delete this request permanently?")) return;
+    setError(null);
+    start(async () => {
+      const res = await deleteQuizReattemptRequest(req.id);
+      if (res.error) {
+        setError(res.error);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  return (
+    <li className="py-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-semibold">{req.student_name}</p>
+          <p className="text-slate-400 text-xs break-all">
+            {req.student_email || "no email on file"} · {fmt(req.created_at)}
+          </p>
+        </div>
+        <span className={`shrink-0 text-xs rounded-full px-2 py-0.5 font-medium ${m.chip}`}>
+          {m.label}
+        </span>
+      </div>
+      <p className="mt-2 text-xs font-semibold text-brand-700">{req.quiz_title}</p>
+
+      <textarea
+        value={feedback}
+        onChange={(e) => setFeedback(e.target.value)}
+        rows={2}
+        placeholder="Feedback for the student (optional)"
+        className={fieldClass() + " mt-2"}
+      />
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => review("approved")}
+          disabled={pending}
+          className="text-xs rounded-lg bg-emerald-600 text-white px-3 py-1.5 font-semibold disabled:opacity-50"
+        >
+          Approve (+2)
+        </button>
+        <button
+          onClick={() => review("rejected")}
+          disabled={pending}
+          className="text-xs rounded-lg bg-rose-600 text-white px-3 py-1.5 font-semibold disabled:opacity-50"
+        >
+          Reject
+        </button>
+        <button
+          onClick={() => review("pending")}
+          disabled={pending}
+          className="text-xs rounded-lg border border-slate-300 text-slate-600 px-2 py-1.5 disabled:opacity-50"
+          title="Save the note without approving or rejecting yet"
+        >
+          Save note only
+        </button>
+        <button
+          onClick={onDelete}
+          disabled={pending}
+          className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1.5 disabled:opacity-50 ml-auto"
+        >
+          Delete
+        </button>
+      </div>
+      {error && <p className="text-rose-600 text-xs mt-1">{error}</p>}
+    </li>
+  );
+}
+
+function QuizEditModal({ quizId, onClose }: { quizId: number; onClose: () => void }) {
+  const router = useRouter();
+  const [detail, setDetail] = useState<QuizDetail | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [pending, start] = useTransition();
+  const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
+  const [addingQuestion, setAddingQuestion] = useState(false);
+  const [editingQuestionId, setEditingQuestionId] = useState<number | null>(null);
+
+  const reload = useCallback(async () => {
+    try {
+      const d = await getQuizDetail(quizId);
+      if (d) setDetail(d);
+      else setLoadFailed(true);
+    } catch {
+      setLoadFailed(true);
+    }
+  }, [quizId]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  function onSaveSettings(formData: FormData) {
+    setSettingsMsg(null);
+    start(async () => {
+      const res = await updateQuiz(quizId, formData);
+      if (res.error) setSettingsMsg(res.error);
+      else {
+        setSettingsMsg("Saved.");
+        await reload();
+        router.refresh();
+      }
+    });
+  }
+
+  function onDeleteQuestion(qid: number) {
+    if (!confirm("Delete this question?")) return;
+    start(async () => {
+      await deleteQuizQuestion(qid);
+      await reload();
+      router.refresh();
+    });
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4 z-50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-bold">Edit quiz</h2>
+          <button onClick={onClose} className="text-slate-400 text-2xl leading-none">
+            ×
+          </button>
+        </div>
+
+        {loadFailed ? (
+          <p className="text-rose-600 text-sm">Could not load this quiz.</p>
+        ) : !detail ? (
+          <p className="text-slate-400 text-sm">Loading…</p>
+        ) : (
+          <>
+            {/* Settings */}
+            <div className="rounded-xl bg-slate-50 p-3 mb-4">
+              <h3 className="font-semibold text-sm mb-2">Settings</h3>
+              <form action={onSaveSettings} className="space-y-2">
+                <input
+                  name="title"
+                  defaultValue={detail.title}
+                  placeholder="Title"
+                  className={fieldClass()}
+                />
+                <textarea
+                  name="description"
+                  defaultValue={detail.description ?? ""}
+                  rows={2}
+                  placeholder="Description"
+                  className={fieldClass()}
+                />
+                <div className="grid grid-cols-3 gap-2">
+                  <label className="text-xs text-slate-500">
+                    Time (min)
+                    <input
+                      name="time_limit_min"
+                      type="number"
+                      min="1"
+                      defaultValue={Math.round(detail.time_limit_sec / 60)}
+                      className={fieldClass()}
+                    />
+                  </label>
+                  <label className="text-xs text-slate-500">
+                    Pass %
+                    <input
+                      name="pass_percent"
+                      type="number"
+                      min="0"
+                      max="100"
+                      defaultValue={detail.pass_percent}
+                      className={fieldClass()}
+                    />
+                  </label>
+                  <label className="text-xs text-slate-500">
+                    Attempts
+                    <input
+                      name="max_attempts"
+                      type="number"
+                      min="1"
+                      defaultValue={detail.max_attempts}
+                      className={fieldClass()}
+                    />
+                  </label>
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    name="is_published"
+                    type="checkbox"
+                    defaultChecked={detail.is_published}
+                    className="h-4 w-4 accent-brand-600"
+                  />
+                  Published
+                </label>
+                <input name="sort_order" type="hidden" defaultValue={detail.sort_order} />
+                <button
+                  type="submit"
+                  disabled={pending}
+                  className="rounded-xl bg-slate-800 px-4 py-2 text-white font-semibold disabled:opacity-50"
+                >
+                  Save settings
+                </button>
+                {settingsMsg && <p className="text-sm mt-1 text-slate-600">{settingsMsg}</p>}
+              </form>
+            </div>
+
+            {/* Questions */}
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-semibold text-sm">Questions ({detail.questions.length})</h3>
+              {!addingQuestion && editingQuestionId == null && (
+                <button
+                  onClick={() => setAddingQuestion(true)}
+                  className="text-xs rounded-lg bg-brand-600 text-white px-3 py-1.5 font-semibold"
+                >
+                  + Add question
+                </button>
+              )}
+            </div>
+
+            {addingQuestion && (
+              <QuestionForm
+                quizId={quizId}
+                question={null}
+                onDone={async (saved) => {
+                  setAddingQuestion(false);
+                  if (saved) {
+                    await reload();
+                    router.refresh();
+                  }
+                }}
+              />
+            )}
+
+            <ul className="space-y-2">
+              {detail.questions.map((q, i) => (
+                <li key={q.id} className="rounded-xl border border-slate-200 p-3">
+                  {editingQuestionId === q.id ? (
+                    <QuestionForm
+                      quizId={quizId}
+                      question={q}
+                      onDone={async (saved) => {
+                        setEditingQuestionId(null);
+                        if (saved) {
+                          await reload();
+                          router.refresh();
+                        }
+                      }}
+                    />
+                  ) : (
+                    <>
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="font-medium text-sm">
+                          <span className="text-slate-400 mr-1">Q{i + 1}.</span>
+                          {q.body}
+                        </p>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={() => setEditingQuestionId(q.id)}
+                            className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-0.5"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => onDeleteQuestion(q.id)}
+                            className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-0.5"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                      <ul className="mt-2 space-y-1">
+                        {q.options.map((o) => (
+                          <li
+                            key={o.id}
+                            className={`text-sm flex items-center gap-2 ${
+                              o.is_correct ? "text-emerald-700 font-medium" : "text-slate-600"
+                            }`}
+                          >
+                            <span>{o.is_correct ? "✅" : "▫️"}</span>
+                            {o.body}
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </li>
+              ))}
+              {detail.questions.length === 0 && !addingQuestion && (
+                <li className="py-4 text-center text-slate-400 text-sm">
+                  No questions yet. Add the first one above.
+                </li>
+              )}
+            </ul>
+
+            {/* Results */}
+            <div className="mt-5">
+              <QuizResultsPanel quizId={quizId} />
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Add/edit a question with its options (each has a "correct" checkbox). */
+function QuestionForm({
+  quizId,
+  question,
+  onDone,
+}: {
+  quizId: number;
+  question: AdminQuizQuestion | null;
+  onDone: (saved: boolean) => void;
+}) {
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [body, setBody] = useState(question?.body ?? "");
+  const [options, setOptions] = useState<{ body: string; correct: boolean }[]>(
+    question
+      ? question.options.map((o) => ({ body: o.body, correct: o.is_correct }))
+      : [
+          { body: "", correct: false },
+          { body: "", correct: false },
+        ]
+  );
+
+  function setOption(i: number, patch: Partial<{ body: string; correct: boolean }>) {
+    setOptions((prev) => prev.map((o, idx) => (idx === i ? { ...o, ...patch } : o)));
+  }
+
+  function onSave() {
+    setError(null);
+    const cleaned = options.map((o) => ({ body: o.body.trim(), correct: o.correct })).filter((o) => o.body);
+    if (!body.trim()) {
+      setError("Write the question first.");
+      return;
+    }
+    if (cleaned.length < 2) {
+      setError("Add at least two options.");
+      return;
+    }
+    if (!cleaned.some((o) => o.correct)) {
+      setError("Mark at least one option correct.");
+      return;
+    }
+    const fd = new FormData();
+    fd.set("body", body);
+    fd.set("options_json", JSON.stringify(cleaned));
+    start(async () => {
+      const res = await saveQuestion(quizId, question?.id ?? null, fd);
+      if (res.error) {
+        setError(res.error);
+        return;
+      }
+      onDone(true);
+    });
+  }
+
+  return (
+    <div className="rounded-xl border border-brand-200 bg-brand-50/40 p-3 mb-2">
+      <textarea
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        rows={2}
+        placeholder="Question"
+        className={fieldClass()}
+      />
+      <p className="text-xs text-slate-500 mt-2 mb-1">
+        Options — tick every correct one (more than one allowed).
+      </p>
+      <div className="space-y-1.5">
+        {options.map((o, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={o.correct}
+              onChange={(e) => setOption(i, { correct: e.target.checked })}
+              className="h-4 w-4 accent-emerald-600 shrink-0"
+              title="Correct?"
+            />
+            <input
+              value={o.body}
+              onChange={(e) => setOption(i, { body: e.target.value })}
+              placeholder={`Option ${i + 1}`}
+              className={fieldClass()}
+            />
+            <button
+              type="button"
+              onClick={() => setOptions((prev) => prev.filter((_, idx) => idx !== i))}
+              disabled={options.length <= 2}
+              className="text-slate-400 disabled:opacity-30 shrink-0"
+              title="Remove option"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={() => setOptions((prev) => [...prev, { body: "", correct: false }])}
+        className="text-xs text-brand-700 mt-2"
+      >
+        + Add option
+      </button>
+
+      {error && <p className="text-rose-600 text-sm mt-2">{error}</p>}
+
+      <div className="flex gap-2 mt-3">
+        <button
+          onClick={onSave}
+          disabled={pending}
+          className="rounded-xl bg-brand-600 px-4 py-2 text-white text-sm font-semibold disabled:opacity-50"
+        >
+          {pending ? "Saving…" : "Save question"}
+        </button>
+        <button
+          onClick={() => onDone(false)}
+          disabled={pending}
+          className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Per-student results for one quiz, loaded lazily inside the editor modal. */
+function QuizResultsPanel({ quizId }: { quizId: number }) {
+  const [rows, setRows] = useState<QuizResultRow[] | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getQuizResults(quizId)
+      .then((r) => {
+        if (alive) setRows(r);
+      })
+      .catch(() => {
+        if (alive) setRows([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [quizId]);
+
+  return (
+    <div className="rounded-xl bg-slate-50 p-3">
+      <h3 className="font-semibold text-sm mb-2">Student results</h3>
+      {rows == null ? (
+        <p className="text-slate-400 text-sm">Loading…</p>
+      ) : rows.length === 0 ? (
+        <p className="text-slate-400 text-sm">No active students.</p>
+      ) : (
+        <ul className="divide-y text-sm">
+          {rows.map((r) => (
+            <li key={r.student_id} className="flex items-center justify-between py-1.5 gap-2">
+              <span className="min-w-0 truncate">{r.name}</span>
+              <span className="flex items-center gap-2 shrink-0">
+                <span className="text-slate-400 text-xs">
+                  {r.attemptsUsed}/{r.attemptsAllowed}
+                </span>
+                {r.lastPercent == null ? (
+                  <span className="text-slate-300">—</span>
+                ) : (
+                  <span
+                    className={`rounded-lg px-2 py-0.5 text-xs font-semibold ${
+                      r.passed
+                        ? "bg-emerald-100 text-emerald-700"
+                        : r.blocked
+                        ? "bg-rose-100 text-rose-700"
+                        : "bg-amber-100 text-amber-700"
+                    }`}
+                  >
+                    {r.lastPercent}%{r.passed ? " ✅" : r.blocked ? " ⛔" : ""}
+                  </span>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

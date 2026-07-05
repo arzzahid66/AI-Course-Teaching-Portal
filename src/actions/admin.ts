@@ -1330,3 +1330,95 @@ export async function deleteQuestion(id: number): Promise<{ error?: string }> {
   revalidatePath("/admin");
   return {};
 }
+
+// ---------------------------------------------------------------------------
+// Leave requests (students appeal for an absence, tutor approves / rejects)
+// ---------------------------------------------------------------------------
+export type LeaveRow = {
+  id: number;
+  student_id: number;
+  student_name: string;
+  student_email: string | null;
+  lesson_title: string | null;
+  lesson_at: string | null;
+  reason: string;
+  status: "pending" | "approved" | "rejected";
+  feedback: string | null;
+  created_at: string;
+  reviewed_at: string | null;
+};
+
+export async function getLeaveRequests(): Promise<LeaveRow[]> {
+  await assertAdmin();
+  return (await sql`
+    SELECT
+      l.id, l.student_id,
+      s.name  AS student_name,
+      s.email AS student_email,
+      l.lesson_title, l.lesson_at, l.reason, l.status, l.feedback,
+      l.created_at, l.reviewed_at
+    FROM leave_requests l
+    JOIN students s ON s.id = l.student_id
+    ORDER BY (l.status = 'pending') DESC, l.created_at DESC
+  `) as LeaveRow[];
+}
+
+/**
+ * Approve / reject a leave request (or just save feedback while keeping it
+ * pending). Stamps reviewed_at only on a real decision and notifies the student.
+ */
+export async function reviewLeaveRequest(
+  id: number,
+  formData: FormData
+): Promise<{ error?: string }> {
+  await assertAdmin();
+  const status = String(formData.get("status") ?? "").trim();
+  const feedback = String(formData.get("feedback") ?? "").trim();
+
+  if (status !== "approved" && status !== "rejected" && status !== "pending") {
+    return { error: "Pick approve or reject." };
+  }
+
+  try {
+    const rows = (await sql`
+      UPDATE leave_requests
+      SET status = ${status},
+          feedback = ${feedback || null},
+          reviewed_at = CASE WHEN ${status} = 'pending' THEN NULL ELSE now() END
+      WHERE id = ${id}
+      RETURNING student_id, lesson_title
+    `) as { student_id: number; lesson_title: string | null }[];
+
+    const l = rows[0];
+    if (l?.student_id && status !== "pending") {
+      const lesson = l.lesson_title ? ` for ${l.lesson_title}` : "";
+      notifyStudent(l.student_id, {
+        title: status === "approved" ? "Leave approved ✅" : "Leave rejected ❌",
+        body:
+          `Your leave request${lesson} was ${status}.` +
+          (feedback ? ` Note: ${feedback.slice(0, 80)}` : ""),
+        url: "/portal",
+      }).catch(() => {});
+    }
+  } catch (e) {
+    return {
+      error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save review.",
+    };
+  }
+  revalidatePath("/admin");
+  return {};
+}
+
+export async function deleteLeaveRequest(id: number): Promise<{ error?: string }> {
+  await assertAdmin();
+  try {
+    await sql`DELETE FROM leave_requests WHERE id = ${id}`;
+  } catch (e) {
+    return {
+      error:
+        e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete leave request.",
+    };
+  }
+  revalidatePath("/admin");
+  return {};
+}

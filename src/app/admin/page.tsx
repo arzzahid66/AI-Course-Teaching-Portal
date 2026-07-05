@@ -10,9 +10,15 @@ import {
   getAssignmentMatrix,
   getDashboardStats,
   getQuestions,
+  getLeaveRequests,
   getLoginLogs,
   type DashboardStats,
 } from "@/actions/admin";
+import {
+  getQuizzesAdmin,
+  getQuizReattemptRequests,
+  getQuizScoreboard,
+} from "@/actions/quiz";
 import LoginForm from "./LoginForm";
 import AdminDashboard from "./AdminDashboard";
 
@@ -60,6 +66,10 @@ export default async function AdminPage() {
     assignmentMatrix,
     dashboardStats,
     questions,
+    leaves,
+    quizzes,
+    quizRequests,
+    quizScoreboard,
     loginLogs,
   ] = await Promise.all([
     settle(getStudents(), []),
@@ -72,6 +82,10 @@ export default async function AdminPage() {
     settle(getAssignmentMatrix(), { assignments: [], students: [], done: {} }),
     settle(getDashboardStats(), EMPTY_STATS),
     settle(getQuestions(), []),
+    settle(getLeaveRequests(), []),
+    settle(getQuizzesAdmin(), []),
+    settle(getQuizReattemptRequests(), []),
+    settle(getQuizScoreboard(), { quizzes: [], students: [], scores: {} }),
     settle(getLoginLogs(), []),
   ]);
 
@@ -88,6 +102,10 @@ export default async function AdminPage() {
       assignmentMatrix={assignmentMatrix}
       dashboardStats={dashboardStats}
       questions={questions}
+      leaves={leaves}
+      quizzes={quizzes}
+      quizRequests={quizRequests}
+      quizScoreboard={quizScoreboard}
       loginLogs={loginLogs}
     />
   );
