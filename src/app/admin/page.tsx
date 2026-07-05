@@ -6,6 +6,7 @@ import {
   getTopics,
   getCurriculum,
   getOutcomes,
+  getResources,
   getAssignmentMatrix,
   getDashboardStats,
   getQuestions,
@@ -55,6 +56,7 @@ export default async function AdminPage() {
     topics,
     curriculum,
     outcomes,
+    resources,
     assignmentMatrix,
     dashboardStats,
     questions,
@@ -66,6 +68,7 @@ export default async function AdminPage() {
     settle(getTopics(), []),
     settle(getCurriculum(), []),
     settle(getOutcomes(), []),
+    settle(getResources(), []),
     settle(getAssignmentMatrix(), { assignments: [], students: [], done: {} }),
     settle(getDashboardStats(), EMPTY_STATS),
     settle(getQuestions(), []),
@@ -81,6 +84,7 @@ export default async function AdminPage() {
       topics={topics}
       curriculum={curriculum}
       outcomes={outcomes}
+      resources={resources}
       assignmentMatrix={assignmentMatrix}
       dashboardStats={dashboardStats}
       questions={questions}

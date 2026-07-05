@@ -1,5 +1,23 @@
 // Business rules and shared constants.
 
+/**
+ * Ensure a pasted link is an absolute URL. Tutors sometimes paste a link
+ * without the scheme (e.g. "meet.google.com/abc-defg-hij" or
+ * "youtu.be/xyz"). Rendered in an `<a href>`, a scheme-less value is treated as
+ * a RELATIVE path, so the student is sent to `/portal/meet.google.com/...` on
+ * the portal domain and gets a 404 instead of the real destination. Prefix
+ * `https://` when the value has no scheme so the link always points outward.
+ */
+export function normalizeUrl(raw: string | null | undefined): string {
+  const link = (raw ?? "").trim();
+  if (!link) return "";
+  if (/^https?:\/\//i.test(link)) return link;
+  return `https://${link}`;
+}
+
+/** Alias kept for the class / Google Meet check-in link. @see normalizeUrl */
+export const normalizeMeetLink = normalizeUrl;
+
 /** Penalty (in Rs) charged to a student who misses a class. */
 export const MISSED_CLASS_PENALTY = 200;
 

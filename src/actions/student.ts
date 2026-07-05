@@ -2,7 +2,7 @@
 
 import { sql } from "@/lib/db";
 import { requireStudentId } from "@/lib/auth";
-import { CHECKIN_WINDOW_MIN } from "@/lib/constants";
+import { CHECKIN_WINDOW_MIN, normalizeMeetLink } from "@/lib/constants";
 import { notifyAdmin } from "@/lib/pushNotifications";
 
 // ---------------------------------------------------------------------------
@@ -32,6 +32,14 @@ export type CurriculumWeek = {
 export type Outcome = {
   id: number;
   body: string;
+};
+
+export type Resource = {
+  id: number;
+  title: string;
+  description: string | null;
+  video_url: string | null;
+  slides_url: string | null;
 };
 
 export type AssignmentWithStatus = {
@@ -80,6 +88,7 @@ export type PortalData = {
   topics: { upcoming: Topic[]; past: Topic[] };
   curriculum: CurriculumWeek[];
   outcomes: Outcome[];
+  resources: Resource[];
   assignments: AssignmentWithStatus[];
   ledger: LedgerEntry[];
   questions: MyQuestion[];
@@ -153,7 +162,11 @@ async function getCheckInState(studentId: number, balance: number): Promise<Chec
   if (!session) return { kind: "no-session" };
 
   if (await hasCheckedIn(studentId, session.id)) {
-    return { kind: "present", sessionTitle: session.title, meetLink: session.meet_link };
+    return {
+      kind: "present",
+      sessionTitle: session.title,
+      meetLink: normalizeMeetLink(session.meet_link),
+    };
   }
   return { kind: "can-checkin", sessionTitle: session.title };
 }
@@ -210,6 +223,19 @@ export async function getPortalData(): Promise<PortalData> {
     console.error("[portal] curriculum/outcomes load failed:", e);
   }
 
+  // Library (recorded lectures + slides) is also non-fatal: the `resources`
+  // table only exists once migration_v8 has run.
+  let resources: Resource[] = [];
+  try {
+    resources = (await sql`
+      SELECT id, title, description, video_url, slides_url
+      FROM resources
+      ORDER BY sort_order ASC, id DESC
+    `) as Resource[];
+  } catch (e) {
+    console.error("[portal] resources load failed:", e);
+  }
+
   const assignmentsRaw = (await sql`
     SELECT
       a.id, a.title, a.description, a.due_at,
@@ -246,6 +272,7 @@ export async function getPortalData(): Promise<PortalData> {
     topics: { upcoming, past },
     curriculum,
     outcomes,
+    resources,
     assignments: assignmentsRaw,
     ledger: ledger.map((l) => ({ ...l, amount: Number(l.amount) })),
     questions,
@@ -336,5 +363,5 @@ export async function checkIn(codeInput: string): Promise<CheckInResult> {
     return { ok: false, error: "Something went wrong. Please try again." };
   }
 
-  return { ok: true, meetLink: session.meet_link };
+  return { ok: true, meetLink: normalizeMeetLink(session.meet_link) };
 }

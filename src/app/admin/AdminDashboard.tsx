@@ -28,6 +28,9 @@ import {
   createOutcome,
   updateOutcome,
   deleteOutcome,
+  createResource,
+  updateResource,
+  deleteResource,
   createAssignment,
   updateAssignment,
   deleteAssignment,
@@ -46,6 +49,7 @@ import {
   type TopicRow,
   type CurriculumWeekRow,
   type OutcomeRow,
+  type ResourceRow,
   type AssignmentMatrix,
   type AssignmentRow,
   type AssignmentStudent,
@@ -75,6 +79,7 @@ type Tab =
   | "payments"
   | "topics"
   | "curriculum"
+  | "library"
   | "assignments"
   | "questions"
   | "logs";
@@ -87,6 +92,7 @@ export default function AdminDashboard({
   topics,
   curriculum,
   outcomes,
+  resources,
   assignmentMatrix,
   dashboardStats,
   questions,
@@ -99,6 +105,7 @@ export default function AdminDashboard({
   topics: TopicRow[];
   curriculum: CurriculumWeekRow[];
   outcomes: OutcomeRow[];
+  resources: ResourceRow[];
   assignmentMatrix: AssignmentMatrix;
   dashboardStats: DashboardStats;
   questions: QuestionRow[];
@@ -118,6 +125,7 @@ export default function AdminDashboard({
     ["payments", "Payments"],
     ["topics", "Topics"],
     ["curriculum", "Course"],
+    ["library", "Library"],
     ["assignments", "Tasks"],
     ["questions", "Questions"],
     ["logs", "Logs"],
@@ -162,6 +170,7 @@ export default function AdminDashboard({
       {tab === "payments" && <PaymentsTab students={students} />}
       {tab === "topics" && <TopicsTab topics={topics} />}
       {tab === "curriculum" && <CourseTab weeks={curriculum} outcomes={outcomes} />}
+      {tab === "library" && <LibraryTab resources={resources} />}
       {tab === "assignments" && <AssignmentsTab matrix={assignmentMatrix} />}
       {tab === "questions" && <QuestionsTab questions={questions} />}
       {tab === "logs" && <LogsTab logs={loginLogs} />}
@@ -1983,6 +1992,227 @@ function TopicEditModal({
             name="planned_at"
             type="datetime-local"
             defaultValue={toDatetimeLocal(topic.planned_at)}
+            className={fieldClass()}
+          />
+          <button
+            type="submit"
+            disabled={pending}
+            className="w-full rounded-xl bg-brand-600 px-4 py-2.5 text-white font-semibold disabled:opacity-50"
+          >
+            Save changes
+          </button>
+        </form>
+        {msg && <p className="text-sm mt-2 text-slate-600">{msg}</p>}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Library (recorded lectures + slides / materials)
+// ---------------------------------------------------------------------------
+function LibraryTab({ resources }: { resources: ResourceRow[] }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<ResourceRow | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  function onCreate(formData: FormData) {
+    setError(null);
+    start(async () => {
+      const res = await createResource(formData);
+      if (res.error) setError(res.error);
+      else formRef.current?.reset();
+      router.refresh();
+    });
+  }
+
+  function onDelete(r: ResourceRow) {
+    if (!confirm(`Delete "${r.title}" from the library? This cannot be undone.`)) return;
+    setError(null);
+    start(async () => {
+      const res = await deleteResource(r.id);
+      if (res.error) setError(res.error);
+      router.refresh();
+    });
+  }
+
+  return (
+    <>
+      <Card>
+        <h2 className="font-bold mb-1">Add to library</h2>
+        <p className="text-slate-500 text-sm mb-3">
+          Add a recorded lecture (YouTube), slides / materials (Google Drive), or both. Every
+          student sees these on their <span className="font-semibold">Library</span> tab.
+        </p>
+        <form ref={formRef} action={onCreate} className="space-y-2">
+          <input name="title" placeholder="Title (e.g. Week 2 — How the Internet Works)" className={fieldClass()} />
+          <input name="description" placeholder="Short note (optional)" className={fieldClass()} />
+          <input name="video_url" placeholder="Recording link — YouTube (optional)" className={fieldClass()} />
+          <input name="slides_url" placeholder="Slides / materials link — Google Drive (optional)" className={fieldClass()} />
+          <input
+            name="sort_order"
+            type="number"
+            step="1"
+            placeholder="Order (0 = top; lower shows first)"
+            className={fieldClass()}
+          />
+          <button
+            type="submit"
+            disabled={pending}
+            className="w-full rounded-xl bg-brand-600 px-4 py-2.5 text-white font-semibold disabled:opacity-50"
+          >
+            Add to library
+          </button>
+        </form>
+        {error && <p className="text-rose-600 text-sm mt-2">{error}</p>}
+      </Card>
+
+      <Card>
+        <h2 className="font-bold mb-2">
+          Library{" "}
+          <span className="text-slate-400 font-normal">({resources.length})</span>
+        </h2>
+        <ul className="divide-y">
+          {resources.map((r) => (
+            <li key={r.id} className="flex items-start justify-between gap-2 py-2">
+              <div className="min-w-0">
+                <p className="font-medium truncate">{r.title}</p>
+                {r.description && (
+                  <p className="text-slate-600 text-sm">{r.description}</p>
+                )}
+                <div className="flex flex-wrap gap-1.5 mt-1">
+                  {r.video_url && (
+                    <a
+                      href={r.video_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs rounded-full bg-rose-50 text-rose-700 px-2 py-0.5"
+                    >
+                      ▶ Recording
+                    </a>
+                  )}
+                  {r.slides_url && (
+                    <a
+                      href={r.slides_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs rounded-full bg-brand-50 text-brand-700 px-2 py-0.5"
+                    >
+                      📄 Slides
+                    </a>
+                  )}
+                  <span className="text-xs text-slate-400">order {r.sort_order}</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setEditing(r)}
+                  className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => onDelete(r)}
+                  disabled={pending}
+                  className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1 disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              </div>
+            </li>
+          ))}
+          {resources.length === 0 && (
+            <li className="py-6 text-center text-slate-400 text-sm">
+              Nothing in the library yet.
+            </li>
+          )}
+        </ul>
+      </Card>
+
+      {editing && (
+        <ResourceEditModal resource={editing} onClose={() => setEditing(null)} />
+      )}
+    </>
+  );
+}
+
+function ResourceEditModal({
+  resource,
+  onClose,
+}: {
+  resource: ResourceRow;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState<string | null>(null);
+
+  function onSave(formData: FormData) {
+    setMsg(null);
+    start(async () => {
+      try {
+        const res = await updateResource(resource.id, formData);
+        if (res.error) {
+          setMsg(res.error);
+          return;
+        }
+        router.refresh();
+        onClose();
+      } catch (e) {
+        setMsg(e instanceof Error ? e.message : "Could not save resource.");
+      }
+    });
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4 z-50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-bold">Edit resource</h2>
+          <button onClick={onClose} className="text-slate-400 text-2xl leading-none">
+            ×
+          </button>
+        </div>
+
+        <form action={onSave} className="space-y-2">
+          <input
+            name="title"
+            defaultValue={resource.title}
+            placeholder="Title"
+            className={fieldClass()}
+          />
+          <input
+            name="description"
+            defaultValue={resource.description ?? ""}
+            placeholder="Short note (optional)"
+            className={fieldClass()}
+          />
+          <input
+            name="video_url"
+            defaultValue={resource.video_url ?? ""}
+            placeholder="Recording link — YouTube (optional)"
+            className={fieldClass()}
+          />
+          <input
+            name="slides_url"
+            defaultValue={resource.slides_url ?? ""}
+            placeholder="Slides / materials link — Google Drive (optional)"
+            className={fieldClass()}
+          />
+          <input
+            name="sort_order"
+            type="number"
+            step="1"
+            defaultValue={resource.sort_order}
+            placeholder="Order"
             className={fieldClass()}
           />
           <button

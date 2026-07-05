@@ -25,7 +25,7 @@ import {
   TUTOR_BIO,
 } from "@/lib/constants";
 
-type Tab = "class" | "course" | "topics" | "assignments" | "record" | "ask";
+type Tab = "class" | "course" | "topics" | "library" | "assignments" | "record" | "ask";
 
 function fmt(d: string | null): string {
   if (!d) return "";
@@ -79,16 +79,18 @@ export default function PortalClient({ data }: { data: PortalData }) {
       )}
       {tab === "course" && <CourseTab data={data} />}
       {tab === "topics" && <TopicsTab data={data} />}
+      {tab === "library" && <LibraryTab data={data} />}
       {tab === "assignments" && <AssignmentsTab data={data} />}
       {tab === "record" && <RecordTab data={data} />}
       {tab === "ask" && <AskTab data={data} />}
 
       {/* Bottom tab bar (mobile-first) */}
-      <nav className="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-white border-t border-slate-200 grid grid-cols-6">
+      <nav className="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-white border-t border-slate-200 grid grid-cols-7">
         {([
           ["class", "Class", "🏫"],
           ["course", "Course", "🎓"],
           ["topics", "Topics", "📚"],
+          ["library", "Library", "🎬"],
           ["assignments", "Tasks", "📝"],
           ["record", "Record", "📊"],
           ["ask", "Ask", "💬"],
@@ -96,7 +98,7 @@ export default function PortalClient({ data }: { data: PortalData }) {
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`py-2.5 flex flex-col items-center gap-0.5 text-xs font-medium ${
+            className={`py-2.5 flex flex-col items-center gap-0.5 text-[11px] font-medium ${
               tab === t ? "text-brand-700" : "text-slate-400"
             }`}
           >
@@ -697,6 +699,70 @@ function TopicsTab({ data }: { data: PortalData }) {
           </ul>
         )}
       </Card>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Library — recorded lectures + slides / materials (read-only for students)
+// ---------------------------------------------------------------------------
+function LibraryTab({ data }: { data: PortalData }) {
+  const { resources } = data;
+
+  if (resources.length === 0) {
+    return (
+      <Card>
+        <div className="text-center py-6">
+          <div className="text-4xl mb-2">🎬</div>
+          <h2 className="text-lg font-bold mb-1">Library</h2>
+          <p className="text-slate-500 text-sm">
+            Recorded lectures and slides will appear here. Check back after class.
+          </p>
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <>
+      <Card>
+        <h2 className="font-bold mb-1">🎬 Library</h2>
+        <p className="text-slate-500 text-sm">
+          Missed a class or want to revise? Watch the recording and open the slides for each
+          lesson here.
+        </p>
+      </Card>
+
+      {resources.map((r) => (
+        <Card key={r.id}>
+          <h3 className="font-bold mb-1">{r.title}</h3>
+          {r.description && (
+            <p className="text-slate-600 text-sm mb-3 whitespace-pre-line">{r.description}</p>
+          )}
+          <div className="grid grid-cols-1 gap-2">
+            {r.video_url && (
+              <a
+                href={r.video_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-white font-semibold active:scale-[0.98] transition"
+              >
+                ▶️ Watch recording
+              </a>
+            )}
+            {r.slides_url && (
+              <a
+                href={r.slides_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-3 text-white font-semibold active:scale-[0.98] transition"
+              >
+                📄 View slides / materials
+              </a>
+            )}
+          </div>
+        </Card>
+      ))}
     </>
   );
 }

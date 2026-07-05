@@ -11,7 +11,12 @@ import {
   generateStudentToken,
   hashPassword,
 } from "@/lib/auth";
-import { MISSED_CLASS_PENALTY, MISSED_CLASS_REASON } from "@/lib/constants";
+import {
+  MISSED_CLASS_PENALTY,
+  MISSED_CLASS_REASON,
+  normalizeMeetLink,
+  normalizeUrl,
+} from "@/lib/constants";
 import { recordLoginLog } from "@/lib/loginLog";
 import { notifyStudent } from "@/lib/pushNotifications";
 
@@ -280,7 +285,7 @@ export async function createSession(formData: FormData): Promise<{ error?: strin
   await assertAdmin();
   const title = String(formData.get("title") ?? "").trim();
   const scheduledAt = String(formData.get("scheduled_at") ?? "").trim();
-  const meetLink = String(formData.get("meet_link") ?? "").trim();
+  const meetLink = normalizeMeetLink(String(formData.get("meet_link") ?? ""));
   const code = String(formData.get("code") ?? "").trim();
 
   if (!title || !scheduledAt || !meetLink || !code) {
@@ -352,7 +357,7 @@ export async function scheduleSession(formData: FormData): Promise<{ error?: str
   await assertAdmin();
   const title = String(formData.get("title") ?? "").trim();
   const scheduledAt = String(formData.get("scheduled_at") ?? "").trim();
-  const meetLink = String(formData.get("meet_link") ?? "").trim();
+  const meetLink = normalizeMeetLink(String(formData.get("meet_link") ?? ""));
   const code = String(formData.get("code") ?? "").trim();
 
   if (!title || !scheduledAt || !meetLink || !code) {
@@ -392,7 +397,7 @@ export async function updateSession(
   await assertAdmin();
   const title = String(formData.get("title") ?? "").trim();
   const scheduledAt = String(formData.get("scheduled_at") ?? "").trim();
-  const meetLink = String(formData.get("meet_link") ?? "").trim();
+  const meetLink = normalizeMeetLink(String(formData.get("meet_link") ?? ""));
   const code = String(formData.get("code") ?? "").trim();
 
   if (!title || !scheduledAt || !meetLink || !code) {
@@ -421,9 +426,21 @@ export async function updateSession(
 export async function deleteSession(sessionId: number): Promise<{ error?: string }> {
   await assertAdmin();
   try {
-    await sql`DELETE FROM ledger WHERE session_id = ${sessionId}`;
-    await sql`DELETE FROM attendance WHERE session_id = ${sessionId}`;
-    await sql`DELETE FROM sessions WHERE id = ${sessionId}`;
+    // Delete the fines (absence penalties), the attendance rows, and the
+    // session itself in ONE statement so it is atomic: a session can never end
+    // up removed while its fines still hang on the students' balances (or vice
+    // versa). The CTEs run first, clearing the rows that reference this session,
+    // then the final DELETE removes the session. Every student who was charged
+    // for this class gets that charge cleared.
+    await sql`
+      WITH cleared_fines AS (
+        DELETE FROM ledger WHERE session_id = ${sessionId}
+      ),
+      cleared_attendance AS (
+        DELETE FROM attendance WHERE session_id = ${sessionId}
+      )
+      DELETE FROM sessions WHERE id = ${sessionId}
+    `;
   } catch (e) {
     return {
       error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete session.",
@@ -521,6 +538,116 @@ export async function deleteTopic(id: number): Promise<void> {
   await assertAdmin();
   await sql`DELETE FROM topics WHERE id = ${id}`;
   revalidatePath("/admin");
+}
+
+// ---------------------------------------------------------------------------
+// Library (recorded lectures + slides / materials)
+// One universal list of resources. Each item may carry a recorded-lecture link
+// (YouTube) and/or a slides link (Google Drive) — either or both.
+// ---------------------------------------------------------------------------
+export type ResourceRow = {
+  id: number;
+  sort_order: number;
+  title: string;
+  description: string | null;
+  video_url: string | null;
+  slides_url: string | null;
+};
+
+export async function getResources(): Promise<ResourceRow[]> {
+  await assertAdmin();
+  return (await sql`
+    SELECT id, sort_order, title, description, video_url, slides_url
+    FROM resources
+    ORDER BY sort_order ASC, id DESC
+  `) as ResourceRow[];
+}
+
+/** Pull + normalize the four resource fields from a submitted form. */
+function readResourceForm(formData: FormData): {
+  title: string;
+  description: string | null;
+  videoUrl: string | null;
+  slidesUrl: string | null;
+  sortOrder: number;
+} {
+  const title = String(formData.get("title") ?? "").trim();
+  const description = String(formData.get("description") ?? "").trim();
+  const videoUrl = normalizeUrl(String(formData.get("video_url") ?? ""));
+  const slidesUrl = normalizeUrl(String(formData.get("slides_url") ?? ""));
+  const sortOrder = Number(formData.get("sort_order"));
+  return {
+    title,
+    description: description || null,
+    videoUrl: videoUrl || null,
+    slidesUrl: slidesUrl || null,
+    sortOrder: Number.isNaN(sortOrder) ? 0 : sortOrder,
+  };
+}
+
+export async function createResource(formData: FormData): Promise<{ error?: string }> {
+  await assertAdmin();
+  const { title, description, videoUrl, slidesUrl, sortOrder } = readResourceForm(formData);
+  if (!title) return { error: "Title is required." };
+  if (!videoUrl && !slidesUrl) {
+    return { error: "Add a recording link, a slides link, or both." };
+  }
+
+  try {
+    await sql`
+      INSERT INTO resources (sort_order, title, description, video_url, slides_url)
+      VALUES (${sortOrder}, ${title}, ${description}, ${videoUrl}, ${slidesUrl})
+    `;
+  } catch (e) {
+    return {
+      error: e instanceof Error ? `Could not add: ${e.message}` : "Could not add resource.",
+    };
+  }
+  revalidatePath("/admin");
+  return {};
+}
+
+export async function updateResource(
+  id: number,
+  formData: FormData
+): Promise<{ error?: string }> {
+  await assertAdmin();
+  const { title, description, videoUrl, slidesUrl, sortOrder } = readResourceForm(formData);
+  if (!title) return { error: "Title is required." };
+  if (!videoUrl && !slidesUrl) {
+    return { error: "Add a recording link, a slides link, or both." };
+  }
+
+  try {
+    await sql`
+      UPDATE resources
+      SET sort_order = ${sortOrder},
+          title = ${title},
+          description = ${description},
+          video_url = ${videoUrl},
+          slides_url = ${slidesUrl}
+      WHERE id = ${id}
+    `;
+  } catch (e) {
+    return {
+      error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save resource.",
+    };
+  }
+  revalidatePath("/admin");
+  return {};
+}
+
+export async function deleteResource(id: number): Promise<{ error?: string }> {
+  await assertAdmin();
+  try {
+    await sql`DELETE FROM resources WHERE id = ${id}`;
+  } catch (e) {
+    return {
+      error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete resource.",
+    };
+  }
+  revalidatePath("/admin");
+  return {};
 }
 
 // ---------------------------------------------------------------------------
