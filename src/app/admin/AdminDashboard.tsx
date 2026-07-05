@@ -71,6 +71,7 @@ import {
   Pie,
   Cell,
 } from "recharts";
+import { parseResourceLinks } from "@/lib/constants";
 
 type Tab =
   | "dashboard"
@@ -2043,14 +2044,32 @@ function LibraryTab({ resources }: { resources: ResourceRow[] }) {
       <Card>
         <h2 className="font-bold mb-1">Add to library</h2>
         <p className="text-slate-500 text-sm mb-3">
-          Add a recorded lecture (YouTube), slides / materials (Google Drive), or both. Every
-          student sees these on their <span className="font-semibold">Library</span> tab.
+          Add recorded lectures (YouTube) and/or slides &amp; materials (Google Drive) for a
+          class. You can add <span className="font-semibold">several links</span> — one per
+          line. Every student sees these on their{" "}
+          <span className="font-semibold">Library</span> tab.
         </p>
         <form ref={formRef} action={onCreate} className="space-y-2">
           <input name="title" placeholder="Title (e.g. Week 2 — How the Internet Works)" className={fieldClass()} />
           <input name="description" placeholder="Short note (optional)" className={fieldClass()} />
-          <input name="video_url" placeholder="Recording link — YouTube (optional)" className={fieldClass()} />
-          <input name="slides_url" placeholder="Slides / materials link — Google Drive (optional)" className={fieldClass()} />
+          <div>
+            <textarea
+              name="video_url"
+              rows={3}
+              placeholder={"Recording links — YouTube (one per line)\nPart 1 | https://youtu.be/xxxx\nhttps://youtu.be/yyyy"}
+              className={fieldClass() + " font-mono text-sm"}
+            />
+            <p className="text-slate-400 text-xs mt-1">
+              One link per line. To name a link, put the name before a “|”, e.g.{" "}
+              <span className="font-mono">Part 1 | https://youtu.be/…</span>
+            </p>
+          </div>
+          <textarea
+            name="slides_url"
+            rows={3}
+            placeholder={"Slides / materials links — Google Drive (one per line)\nSlides | https://drive.google.com/…\nWorksheet | https://drive.google.com/…"}
+            className={fieldClass() + " font-mono text-sm"}
+          />
           <input
             name="sort_order"
             type="number"
@@ -2075,7 +2094,10 @@ function LibraryTab({ resources }: { resources: ResourceRow[] }) {
           <span className="text-slate-400 font-normal">({resources.length})</span>
         </h2>
         <ul className="divide-y">
-          {resources.map((r) => (
+          {resources.map((r) => {
+            const vids = parseResourceLinks(r.video_url);
+            const slds = parseResourceLinks(r.slides_url);
+            return (
             <li key={r.id} className="flex items-start justify-between gap-2 py-2">
               <div className="min-w-0">
                 <p className="font-medium truncate">{r.title}</p>
@@ -2083,26 +2105,28 @@ function LibraryTab({ resources }: { resources: ResourceRow[] }) {
                   <p className="text-slate-600 text-sm">{r.description}</p>
                 )}
                 <div className="flex flex-wrap gap-1.5 mt-1">
-                  {r.video_url && (
+                  {vids.map((v, i) => (
                     <a
-                      href={r.video_url}
+                      key={`v-${i}`}
+                      href={v.url}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-xs rounded-full bg-rose-50 text-rose-700 px-2 py-0.5"
                     >
-                      ▶ Recording
+                      ▶ {v.label || (vids.length > 1 ? `Recording ${i + 1}` : "Recording")}
                     </a>
-                  )}
-                  {r.slides_url && (
+                  ))}
+                  {slds.map((s, i) => (
                     <a
-                      href={r.slides_url}
+                      key={`s-${i}`}
+                      href={s.url}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-xs rounded-full bg-brand-50 text-brand-700 px-2 py-0.5"
                     >
-                      📄 Slides
+                      📄 {s.label || (slds.length > 1 ? `Slides ${i + 1}` : "Slides")}
                     </a>
-                  )}
+                  ))}
                   <span className="text-xs text-slate-400">order {r.sort_order}</span>
                 </div>
               </div>
@@ -2122,7 +2146,8 @@ function LibraryTab({ resources }: { resources: ResourceRow[] }) {
                 </button>
               </div>
             </li>
-          ))}
+            );
+          })}
           {resources.length === 0 && (
             <li className="py-6 text-center text-slate-400 text-sm">
               Nothing in the library yet.
@@ -2195,17 +2220,25 @@ function ResourceEditModal({
             placeholder="Short note (optional)"
             className={fieldClass()}
           />
-          <input
-            name="video_url"
-            defaultValue={resource.video_url ?? ""}
-            placeholder="Recording link — YouTube (optional)"
-            className={fieldClass()}
-          />
-          <input
+          <div>
+            <textarea
+              name="video_url"
+              rows={3}
+              defaultValue={resource.video_url ?? ""}
+              placeholder="Recording links — YouTube (one per line)"
+              className={fieldClass() + " font-mono text-sm"}
+            />
+            <p className="text-slate-400 text-xs mt-1">
+              One link per line. Optional name before a “|”, e.g.{" "}
+              <span className="font-mono">Part 1 | https://youtu.be/…</span>
+            </p>
+          </div>
+          <textarea
             name="slides_url"
+            rows={3}
             defaultValue={resource.slides_url ?? ""}
-            placeholder="Slides / materials link — Google Drive (optional)"
-            className={fieldClass()}
+            placeholder="Slides / materials links — Google Drive (one per line)"
+            className={fieldClass() + " font-mono text-sm"}
           />
           <input
             name="sort_order"

@@ -2,7 +2,12 @@
 
 import { sql } from "@/lib/db";
 import { requireStudentId } from "@/lib/auth";
-import { CHECKIN_WINDOW_MIN, normalizeMeetLink } from "@/lib/constants";
+import {
+  CHECKIN_WINDOW_MIN,
+  normalizeMeetLink,
+  parseResourceLinks,
+  type ResourceLink,
+} from "@/lib/constants";
 import { notifyAdmin } from "@/lib/pushNotifications";
 
 // ---------------------------------------------------------------------------
@@ -38,8 +43,8 @@ export type Resource = {
   id: number;
   title: string;
   description: string | null;
-  video_url: string | null;
-  slides_url: string | null;
+  videos: ResourceLink[];
+  slides: ResourceLink[];
 };
 
 export type AssignmentWithStatus = {
@@ -224,14 +229,28 @@ export async function getPortalData(): Promise<PortalData> {
   }
 
   // Library (recorded lectures + slides) is also non-fatal: the `resources`
-  // table only exists once migration_v8 has run.
+  // table only exists once its migration has run. Each item can hold several
+  // recording / slides links, stored one-per-line — parse them into arrays.
   let resources: Resource[] = [];
   try {
-    resources = (await sql`
+    const rows = (await sql`
       SELECT id, title, description, video_url, slides_url
       FROM resources
       ORDER BY sort_order ASC, id DESC
-    `) as Resource[];
+    `) as {
+      id: number;
+      title: string;
+      description: string | null;
+      video_url: string | null;
+      slides_url: string | null;
+    }[];
+    resources = rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      description: r.description,
+      videos: parseResourceLinks(r.video_url),
+      slides: parseResourceLinks(r.slides_url),
+    }));
   } catch (e) {
     console.error("[portal] resources load failed:", e);
   }

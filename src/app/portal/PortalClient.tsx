@@ -733,36 +733,46 @@ function LibraryTab({ data }: { data: PortalData }) {
         </p>
       </Card>
 
-      {resources.map((r) => (
-        <Card key={r.id}>
-          <h3 className="font-bold mb-1">{r.title}</h3>
-          {r.description && (
-            <p className="text-slate-600 text-sm mb-3 whitespace-pre-line">{r.description}</p>
-          )}
-          <div className="grid grid-cols-1 gap-2">
-            {r.video_url && (
-              <a
-                href={r.video_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-white font-semibold active:scale-[0.98] transition"
-              >
-                ▶️ Watch recording
-              </a>
+      {resources.map((r) => {
+        return (
+          <Card key={r.id}>
+            <h3 className="font-bold mb-1">{r.title}</h3>
+            {r.description && (
+              <p className="text-slate-600 text-sm mb-3 whitespace-pre-line">{r.description}</p>
             )}
-            {r.slides_url && (
-              <a
-                href={r.slides_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-3 text-white font-semibold active:scale-[0.98] transition"
-              >
-                📄 View slides / materials
-              </a>
-            )}
-          </div>
-        </Card>
-      ))}
+            <div className="grid grid-cols-1 gap-2">
+              {r.videos.map((v, i) => (
+                <a
+                  key={`v-${i}`}
+                  href={v.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-white font-semibold active:scale-[0.98] transition"
+                >
+                  ▶️{" "}
+                  {v.label ||
+                    (r.videos.length > 1 ? `Watch recording ${i + 1}` : "Watch recording")}
+                </a>
+              ))}
+              {r.slides.map((s, i) => (
+                <a
+                  key={`s-${i}`}
+                  href={s.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-3 text-white font-semibold active:scale-[0.98] transition"
+                >
+                  📄{" "}
+                  {s.label ||
+                    (r.slides.length > 1
+                      ? `View slides / materials ${i + 1}`
+                      : "View slides / materials")}
+                </a>
+              ))}
+            </div>
+          </Card>
+        );
+      })}
     </>
   );
 }

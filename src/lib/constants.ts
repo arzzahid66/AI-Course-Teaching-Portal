@@ -18,6 +18,37 @@ export function normalizeUrl(raw: string | null | undefined): string {
 /** Alias kept for the class / Google Meet check-in link. @see normalizeUrl */
 export const normalizeMeetLink = normalizeUrl;
 
+/** One named link inside a Library resource (a recording or a slides file). */
+export type ResourceLink = { label: string; url: string };
+
+/**
+ * Parse a resource's multi-line link text into structured links. A Library item
+ * can hold several recordings and/or several slide files: the tutor enters one
+ * link per line in the admin form, optionally naming it as "Label | https://…".
+ * Blank lines are ignored, each URL is normalized to an absolute https URL, and
+ * a line with no "|" has an empty label (the UI then shows a sensible default).
+ */
+export function parseResourceLinks(raw: string | null | undefined): ResourceLink[] {
+  const text = (raw ?? "").trim();
+  if (!text) return [];
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const i = line.indexOf("|");
+      const label = i >= 0 ? line.slice(0, i).trim() : "";
+      const rawUrl = i >= 0 ? line.slice(i + 1).trim() : line;
+      return { label, url: normalizeUrl(rawUrl) };
+    })
+    .filter((l) => l.url.length > 0);
+}
+
+/** Re-serialize parsed links back to the stored "Label | url" multi-line text. */
+export function serializeResourceLinks(links: ResourceLink[]): string {
+  return links.map((l) => (l.label ? `${l.label} | ${l.url}` : l.url)).join("\n");
+}
+
 /** Penalty (in Rs) charged to a student who misses a class. */
 export const MISSED_CLASS_PENALTY = 200;
 

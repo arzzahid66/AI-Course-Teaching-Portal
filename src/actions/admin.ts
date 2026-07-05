@@ -15,7 +15,8 @@ import {
   MISSED_CLASS_PENALTY,
   MISSED_CLASS_REASON,
   normalizeMeetLink,
-  normalizeUrl,
+  parseResourceLinks,
+  serializeResourceLinks,
 } from "@/lib/constants";
 import { recordLoginLog } from "@/lib/loginLog";
 import { notifyStudent } from "@/lib/pushNotifications";
@@ -542,8 +543,10 @@ export async function deleteTopic(id: number): Promise<void> {
 
 // ---------------------------------------------------------------------------
 // Library (recorded lectures + slides / materials)
-// One universal list of resources. Each item may carry a recorded-lecture link
-// (YouTube) and/or a slides link (Google Drive) — either or both.
+// One universal list of resources. Each item may carry any number of recording
+// links (YouTube) and/or slides links (Google Drive), stored one-per-line in
+// `video_url` / `slides_url` (optionally named "Label | url"). Parse them with
+// parseResourceLinks() for display.
 // ---------------------------------------------------------------------------
 export type ResourceRow = {
   id: number;
@@ -563,40 +566,47 @@ export async function getResources(): Promise<ResourceRow[]> {
   `) as ResourceRow[];
 }
 
-/** Pull + normalize the four resource fields from a submitted form. */
+/**
+ * Pull the resource fields from a submitted form. `video_url` / `slides_url` are
+ * multi-line textareas — each non-empty line is one link (optionally "Label |
+ * url"), normalized and re-serialized so we always store clean absolute URLs.
+ */
 function readResourceForm(formData: FormData): {
   title: string;
   description: string | null;
-  videoUrl: string | null;
-  slidesUrl: string | null;
+  videoText: string | null;
+  slidesText: string | null;
+  hasAnyLink: boolean;
   sortOrder: number;
 } {
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
-  const videoUrl = normalizeUrl(String(formData.get("video_url") ?? ""));
-  const slidesUrl = normalizeUrl(String(formData.get("slides_url") ?? ""));
+  const videos = parseResourceLinks(String(formData.get("video_url") ?? ""));
+  const slides = parseResourceLinks(String(formData.get("slides_url") ?? ""));
   const sortOrder = Number(formData.get("sort_order"));
   return {
     title,
     description: description || null,
-    videoUrl: videoUrl || null,
-    slidesUrl: slidesUrl || null,
+    videoText: videos.length ? serializeResourceLinks(videos) : null,
+    slidesText: slides.length ? serializeResourceLinks(slides) : null,
+    hasAnyLink: videos.length + slides.length > 0,
     sortOrder: Number.isNaN(sortOrder) ? 0 : sortOrder,
   };
 }
 
 export async function createResource(formData: FormData): Promise<{ error?: string }> {
   await assertAdmin();
-  const { title, description, videoUrl, slidesUrl, sortOrder } = readResourceForm(formData);
+  const { title, description, videoText, slidesText, hasAnyLink, sortOrder } =
+    readResourceForm(formData);
   if (!title) return { error: "Title is required." };
-  if (!videoUrl && !slidesUrl) {
-    return { error: "Add a recording link, a slides link, or both." };
+  if (!hasAnyLink) {
+    return { error: "Add at least one recording or slides link." };
   }
 
   try {
     await sql`
       INSERT INTO resources (sort_order, title, description, video_url, slides_url)
-      VALUES (${sortOrder}, ${title}, ${description}, ${videoUrl}, ${slidesUrl})
+      VALUES (${sortOrder}, ${title}, ${description}, ${videoText}, ${slidesText})
     `;
   } catch (e) {
     return {
@@ -612,10 +622,11 @@ export async function updateResource(
   formData: FormData
 ): Promise<{ error?: string }> {
   await assertAdmin();
-  const { title, description, videoUrl, slidesUrl, sortOrder } = readResourceForm(formData);
+  const { title, description, videoText, slidesText, hasAnyLink, sortOrder } =
+    readResourceForm(formData);
   if (!title) return { error: "Title is required." };
-  if (!videoUrl && !slidesUrl) {
-    return { error: "Add a recording link, a slides link, or both." };
+  if (!hasAnyLink) {
+    return { error: "Add at least one recording or slides link." };
   }
 
   try {
@@ -624,8 +635,8 @@ export async function updateResource(
       SET sort_order = ${sortOrder},
           title = ${title},
           description = ${description},
-          video_url = ${videoUrl},
-          slides_url = ${slidesUrl}
+          video_url = ${videoText},
+          slides_url = ${slidesText}
       WHERE id = ${id}
     `;
   } catch (e) {
