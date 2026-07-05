@@ -13,6 +13,7 @@
 -- IMPORTANT: quiz_options.is_correct is the answer key — it is never sent to the
 -- browser. Scoring happens entirely server-side (see src/actions/quiz.ts).
 
+
 CREATE TABLE IF NOT EXISTS quizzes (
   id             serial PRIMARY KEY,
   title          text NOT NULL,                      -- e.g. "AI Basics"
