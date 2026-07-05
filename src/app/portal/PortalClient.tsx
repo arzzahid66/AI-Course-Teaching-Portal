@@ -1201,6 +1201,7 @@ function QuizRunner({
   const target = new Date(attempt.expiresAt).getTime();
   const [now, setNow] = useState(() => Date.now());
   const [selections, setSelections] = useState<Map<number, Set<number>>>(new Map());
+  const [current, setCurrent] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submittedRef = useRef(false);
@@ -1253,12 +1254,22 @@ function QuizRunner({
     });
   }
 
+  const total = attempt.questions.length;
   const answeredCount = attempt.questions.filter(
     (q) => (selections.get(q.id)?.size ?? 0) > 0
   ).length;
 
+  // Clamp the page index in case the question set is ever shorter than expected.
+  const idx = Math.min(current, Math.max(0, total - 1));
+  const q = attempt.questions[idx];
+  const isFirst = idx === 0;
+  const isLast = idx >= total - 1;
+
+  // Block copy / cut / right-click on the question area (deterrent, not DRM).
+  const blockCopy = (e: React.SyntheticEvent) => e.preventDefault();
+
   return (
-    <>
+    <div className="select-none" onCopy={blockCopy} onCut={blockCopy} onContextMenu={blockCopy}>
       {/* Sticky timer header */}
       <div className="sticky top-0 z-10 -mx-4 px-4 py-2 bg-white/95 backdrop-blur border-b border-slate-200 mb-4">
         <div className="flex items-center justify-between">
@@ -1274,15 +1285,23 @@ function QuizRunner({
             {mm}:{ss}
           </div>
         </div>
+        {/* Progress bar + counters */}
+        <div className="mt-2 h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+          <div
+            className="h-full rounded-full bg-brand-500 transition-all"
+            style={{ width: `${total > 0 ? ((idx + 1) / total) * 100 : 0}%` }}
+          />
+        </div>
         <p className="text-xs text-slate-400 mt-1">
-          Answered {answeredCount}/{attempt.questions.length} · pass mark {attempt.passPercent}%
+          Question {idx + 1} of {total} · answered {answeredCount}/{total} · pass{" "}
+          {attempt.passPercent}%
         </p>
       </div>
 
-      {attempt.questions.map((q, i) => (
+      {q && (
         <Card key={q.id}>
           <p className="font-semibold mb-1">
-            <span className="text-slate-400 mr-1">Q{i + 1}.</span>
+            <span className="text-slate-400 mr-1">Q{idx + 1}.</span>
             {q.body}
           </p>
           <p className="text-slate-400 text-xs mb-3">Select all that apply.</p>
@@ -1310,24 +1329,49 @@ function QuizRunner({
             })}
           </div>
         </Card>
-      ))}
+      )}
 
-      <Card>
-        {error && <p className="text-rose-600 text-sm mb-2">{error}</p>}
+      {error && (
+        <Card>
+          <p className="text-rose-600 text-sm">{error}</p>
+        </Card>
+      )}
+
+      {/* Back / Next (or Submit on the last question) */}
+      <div className="flex items-center gap-3 mb-4">
         <button
-          onClick={() => {
-            if (confirm("Submit your quiz now? You can't change answers after this.")) doSubmit();
-          }}
-          disabled={submitting}
-          className="w-full rounded-2xl bg-brand-600 px-5 py-4 text-white text-lg font-bold shadow-sm active:scale-[0.98] transition disabled:opacity-50"
+          onClick={() => setCurrent((c) => Math.max(0, c - 1))}
+          disabled={isFirst || submitting}
+          className="rounded-xl border border-slate-300 px-4 py-3 font-semibold text-slate-700 disabled:opacity-40"
         >
-          {submitting ? "Submitting…" : "Submit quiz"}
+          ← Back
         </button>
-        <p className="text-slate-400 text-xs mt-2 text-center">
-          The timer keeps running — the quiz auto-submits when it reaches 0:00.
-        </p>
-      </Card>
-    </>
+
+        {isLast ? (
+          <button
+            onClick={() => {
+              if (confirm("Submit your quiz now? You can't change answers after this.")) doSubmit();
+            }}
+            disabled={submitting}
+            className="flex-1 rounded-xl bg-brand-600 px-5 py-3 text-white text-lg font-bold shadow-sm active:scale-[0.98] transition disabled:opacity-50"
+          >
+            {submitting ? "Submitting…" : "Submit quiz"}
+          </button>
+        ) : (
+          <button
+            onClick={() => setCurrent((c) => Math.min(total - 1, c + 1))}
+            disabled={submitting}
+            className="flex-1 rounded-xl bg-brand-600 px-5 py-3 text-white font-bold shadow-sm active:scale-[0.98] transition disabled:opacity-50"
+          >
+            Next →
+          </button>
+        )}
+      </div>
+
+      <p className="text-slate-400 text-xs text-center mb-2">
+        The timer keeps running — the quiz auto-submits when it reaches 0:00.
+      </p>
+    </div>
   );
 }
 

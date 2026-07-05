@@ -14,6 +14,16 @@ import { notifyAdmin, notifyStudent } from "@/lib/pushNotifications";
 // Shared helpers
 // ===========================================================================
 
+/** Fisher–Yates shuffle — returns a new array, leaves the input untouched. */
+function shuffle<T>(input: readonly T[]): T[] {
+  const a = [...input];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 /**
  * Finalize any of this student's attempts whose timer has run out but were never
  * submitted (student closed the tab, lost connection, etc.). They become a
@@ -27,7 +37,8 @@ async function finalizeExpiredAttempts(studentId: number, quizId?: number): Prom
       UPDATE quiz_attempts qa
       SET status = 'submitted',
           score = COALESCE(qa.score, 0),
-          total = COALESCE(qa.total, (SELECT COUNT(*) FROM quiz_questions q WHERE q.quiz_id = qa.quiz_id)),
+          total = COALESCE(qa.total, array_length(qa.question_ids, 1),
+                           (SELECT COUNT(*) FROM quiz_questions q WHERE q.quiz_id = qa.quiz_id)),
           percent = COALESCE(qa.percent, 0),
           passed = COALESCE(qa.passed, false),
           submitted_at = COALESCE(qa.submitted_at, qa.expires_at)
@@ -41,7 +52,8 @@ async function finalizeExpiredAttempts(studentId: number, quizId?: number): Prom
       UPDATE quiz_attempts qa
       SET status = 'submitted',
           score = COALESCE(qa.score, 0),
-          total = COALESCE(qa.total, (SELECT COUNT(*) FROM quiz_questions q WHERE q.quiz_id = qa.quiz_id)),
+          total = COALESCE(qa.total, array_length(qa.question_ids, 1),
+                           (SELECT COUNT(*) FROM quiz_questions q WHERE q.quiz_id = qa.quiz_id)),
           percent = COALESCE(qa.percent, 0),
           passed = COALESCE(qa.passed, false),
           submitted_at = COALESCE(qa.submitted_at, qa.expires_at)
@@ -137,6 +149,7 @@ export async function getStudentQuizzes(): Promise<StudentQuiz[]> {
   const quizzes = (await sql`
     SELECT
       q.id, q.title, q.description, q.time_limit_sec, q.pass_percent, q.max_attempts,
+      q.questions_per_attempt,
       (SELECT COUNT(*) FROM quiz_questions qq WHERE qq.quiz_id = q.id) AS question_count
     FROM quizzes q
     WHERE q.is_published = true
@@ -148,6 +161,7 @@ export async function getStudentQuizzes(): Promise<StudentQuiz[]> {
     time_limit_sec: number;
     pass_percent: number;
     max_attempts: number;
+    questions_per_attempt: number;
     question_count: string;
   }[];
 
@@ -187,7 +201,12 @@ export async function getStudentQuizzes(): Promise<StudentQuiz[]> {
   return quizzes.map((q) => {
     const mine = attempts.filter((a) => a.quiz_id === q.id);
     const submitted = mine.filter((a) => a.status === "submitted");
-    const questionCount = Number(q.question_count);
+    const poolCount = Number(q.question_count);
+    const perAttempt = Number(q.questions_per_attempt);
+    // How many questions the student actually gets: a random subset when the
+    // tutor set a limit, otherwise the whole pool.
+    const questionCount =
+      perAttempt > 0 ? Math.min(perAttempt, poolCount) : poolCount;
     const used = mine.length;
     const allowed = Number(q.max_attempts) + (grantMap.get(q.id) ?? 0);
     const passed = submitted.some((a) => a.passed === true);
@@ -251,13 +270,14 @@ export async function startQuizAttempt(quizId: number): Promise<StartQuizResult>
   await finalizeExpiredAttempts(studentId, quizId);
 
   const quizRows = (await sql`
-    SELECT id, title, time_limit_sec, pass_percent, is_published
+    SELECT id, title, time_limit_sec, pass_percent, questions_per_attempt, is_published
     FROM quizzes WHERE id = ${quizId} LIMIT 1
   `) as {
     id: number;
     title: string;
     time_limit_sec: number;
     pass_percent: number;
+    questions_per_attempt: number;
     is_published: boolean;
   }[];
   const quiz = quizRows[0];
@@ -265,23 +285,25 @@ export async function startQuizAttempt(quizId: number): Promise<StartQuizResult>
     return { ok: false, error: "This quiz is not available." };
   }
 
-  const questions = await loadQuestionsForStudent(quizId);
-  if (questions.length === 0) {
-    return { ok: false, error: "This quiz has no questions yet." };
-  }
-
+  const timeLimitSec = Number(quiz.time_limit_sec);
   const stats = await getAttemptStats(studentId, quizId);
 
-  // Resume an already-running attempt instead of burning another one.
+  // Resume an already-running attempt instead of burning another one — reload
+  // the exact same question set (stored on the attempt) so nothing changes.
   if (stats.active) {
+    const storedRows = (await sql`
+      SELECT question_ids FROM quiz_attempts WHERE id = ${stats.active.id} LIMIT 1
+    `) as { question_ids: number[] | null }[];
+    const storedIds = storedRows[0]?.question_ids ?? [];
+    const ids = storedIds.length > 0 ? storedIds : await getQuizQuestionIds(quizId);
     return {
       ok: true,
       attemptId: stats.active.id,
       expiresAt: stats.active.expires_at,
-      timeLimitSec: Number(quiz.time_limit_sec),
+      timeLimitSec,
       passPercent: Number(quiz.pass_percent),
       title: quiz.title,
-      questions,
+      questions: await loadQuestionsByIds(ids),
     };
   }
 
@@ -295,12 +317,22 @@ export async function startQuizAttempt(quizId: number): Promise<StartQuizResult>
     };
   }
 
-  const timeLimitSec = Number(quiz.time_limit_sec);
-  const expiresAt = new Date(Date.now() + timeLimitSec * 1000).toISOString();
+  // Pick this attempt's questions: shuffle the whole pool, then take the first
+  // N when the tutor capped it (questions_per_attempt > 0). Random every time.
+  const poolIds = await getQuizQuestionIds(quizId);
+  if (poolIds.length === 0) {
+    return { ok: false, error: "This quiz has no questions yet." };
+  }
+  const perAttempt = Number(quiz.questions_per_attempt);
+  let servedIds = shuffle(poolIds);
+  if (perAttempt > 0 && perAttempt < servedIds.length) {
+    servedIds = servedIds.slice(0, perAttempt);
+  }
 
+  const expiresAt = new Date(Date.now() + timeLimitSec * 1000).toISOString();
   const inserted = (await sql`
-    INSERT INTO quiz_attempts (quiz_id, student_id, status, expires_at)
-    VALUES (${quizId}, ${studentId}, 'in_progress', ${expiresAt})
+    INSERT INTO quiz_attempts (quiz_id, student_id, status, expires_at, question_ids)
+    VALUES (${quizId}, ${studentId}, 'in_progress', ${expiresAt}, ${servedIds}::int[])
     RETURNING id
   `) as { id: number }[];
 
@@ -311,33 +343,45 @@ export async function startQuizAttempt(quizId: number): Promise<StartQuizResult>
     timeLimitSec,
     passPercent: Number(quiz.pass_percent),
     title: quiz.title,
-    questions,
+    questions: await loadQuestionsByIds(servedIds),
   };
 }
 
-/** Load a quiz's questions + options for a student — WITHOUT the answer key. */
-async function loadQuestionsForStudent(quizId: number): Promise<QuizAttemptQuestion[]> {
-  const questions = (await sql`
-    SELECT id, body FROM quiz_questions
-    WHERE quiz_id = ${quizId}
-    ORDER BY sort_order ASC, id ASC
-  `) as { id: number; body: string }[];
-  if (questions.length === 0) return [];
+/** All question ids for a quiz, in author order. */
+async function getQuizQuestionIds(quizId: number): Promise<number[]> {
+  const rows = (await sql`
+    SELECT id FROM quiz_questions WHERE quiz_id = ${quizId} ORDER BY sort_order ASC, id ASC
+  `) as { id: number }[];
+  return rows.map((r) => r.id);
+}
 
-  const qIds = questions.map((q) => q.id);
+/**
+ * Load the given questions (in the given order) with their options for a student
+ * — WITHOUT the answer key. Options are shuffled so their position varies too.
+ */
+async function loadQuestionsByIds(ids: number[]): Promise<QuizAttemptQuestion[]> {
+  if (ids.length === 0) return [];
+
+  const questions = (await sql`
+    SELECT id, body FROM quiz_questions WHERE id = ANY(${ids}::int[])
+  `) as { id: number; body: string }[];
   const options = (await sql`
     SELECT id, question_id, body FROM quiz_options
-    WHERE question_id = ANY(${qIds})
+    WHERE question_id = ANY(${ids}::int[])
     ORDER BY sort_order ASC, id ASC
   `) as { id: number; question_id: number; body: string }[];
 
-  return questions.map((q) => ({
-    id: q.id,
-    body: q.body,
-    options: options
-      .filter((o) => o.question_id === q.id)
-      .map((o) => ({ id: o.id, body: o.body })),
-  }));
+  const byId = new Map(questions.map((q) => [q.id, q]));
+  // Preserve the requested order; drop any ids that no longer exist.
+  return ids
+    .filter((id) => byId.has(id))
+    .map((id) => ({
+      id,
+      body: byId.get(id)!.body,
+      options: shuffle(
+        options.filter((o) => o.question_id === id).map((o) => ({ id: o.id, body: o.body }))
+      ),
+    }));
 }
 
 export type SubmitQuizResult =
@@ -363,7 +407,8 @@ export async function submitQuizAttempt(
   const studentId = await requireStudentId();
 
   const attemptRows = (await sql`
-    SELECT a.id, a.quiz_id, a.status, a.score, a.total, a.percent, a.passed, q.pass_percent
+    SELECT a.id, a.quiz_id, a.status, a.score, a.total, a.percent, a.passed,
+           a.question_ids, q.pass_percent
     FROM quiz_attempts a
     JOIN quizzes q ON q.id = a.quiz_id
     WHERE a.id = ${attemptId} AND a.student_id = ${studentId}
@@ -376,6 +421,7 @@ export async function submitQuizAttempt(
     total: number | null;
     percent: number | null;
     passed: boolean | null;
+    question_ids: number[] | null;
     pass_percent: number;
   }[];
   const attempt = attemptRows[0];
@@ -394,17 +440,18 @@ export async function submitQuizAttempt(
     };
   }
 
-  // Load the answer key server-side.
-  const questions = (await sql`
-    SELECT id FROM quiz_questions WHERE quiz_id = ${attempt.quiz_id}
-  `) as { id: number }[];
-  const total = questions.length;
+  // Score ONLY the questions actually served for this attempt. Fall back to the
+  // whole pool for older attempts saved before question_ids existed.
+  const servedIds =
+    attempt.question_ids && attempt.question_ids.length > 0
+      ? attempt.question_ids
+      : await getQuizQuestionIds(attempt.quiz_id);
+  const total = servedIds.length;
 
   const correctOptions = (await sql`
     SELECT question_id, id
     FROM quiz_options
-    WHERE is_correct = true
-      AND question_id IN (SELECT id FROM quiz_questions WHERE quiz_id = ${attempt.quiz_id})
+    WHERE is_correct = true AND question_id = ANY(${servedIds}::int[])
   `) as { question_id: number; id: number }[];
 
   const correctByQuestion = new Map<number, Set<number>>();
@@ -419,10 +466,10 @@ export async function submitQuizAttempt(
   }
 
   let score = 0;
-  for (const q of questions) {
-    const correct = correctByQuestion.get(q.id);
+  for (const qid of servedIds) {
+    const correct = correctByQuestion.get(qid);
     if (!correct || correct.size === 0) continue; // misconfigured question can't be correct
-    const chosen = answerByQuestion.get(q.id) ?? new Set<number>();
+    const chosen = answerByQuestion.get(qid) ?? new Set<number>();
     if (chosen.size !== correct.size) continue;
     let allMatch = true;
     for (const id of chosen) {
@@ -506,6 +553,7 @@ export type AdminQuizRow = {
   time_limit_sec: number;
   pass_percent: number;
   max_attempts: number;
+  questions_per_attempt: number;
   is_published: boolean;
   sort_order: number;
   question_count: number;
@@ -517,7 +565,7 @@ export async function getQuizzesAdmin(): Promise<AdminQuizRow[]> {
   const rows = (await sql`
     SELECT
       q.id, q.title, q.description, q.time_limit_sec, q.pass_percent, q.max_attempts,
-      q.is_published, q.sort_order,
+      q.questions_per_attempt, q.is_published, q.sort_order,
       (SELECT COUNT(*) FROM quiz_questions qq WHERE qq.quiz_id = q.id) AS question_count,
       (SELECT COUNT(*) FROM quiz_attempts qa WHERE qa.quiz_id = q.id AND qa.status = 'submitted') AS attempt_count
     FROM quizzes q
@@ -542,6 +590,7 @@ export type QuizDetail = {
   time_limit_sec: number;
   pass_percent: number;
   max_attempts: number;
+  questions_per_attempt: number;
   is_published: boolean;
   sort_order: number;
   questions: AdminQuizQuestion[];
@@ -550,7 +599,8 @@ export type QuizDetail = {
 export async function getQuizDetail(quizId: number): Promise<QuizDetail | null> {
   await assertAdmin();
   const quizRows = (await sql`
-    SELECT id, title, description, time_limit_sec, pass_percent, max_attempts, is_published, sort_order
+    SELECT id, title, description, time_limit_sec, pass_percent, max_attempts,
+           questions_per_attempt, is_published, sort_order
     FROM quizzes WHERE id = ${quizId} LIMIT 1
   `) as Omit<QuizDetail, "questions">[];
   const quiz = quizRows[0];
@@ -591,6 +641,7 @@ function readQuizForm(formData: FormData): {
   timeLimitSec: number;
   passPercent: number;
   maxAttempts: number;
+  questionsPerAttempt: number;
   isPublished: boolean;
   sortOrder: number;
   error?: string;
@@ -600,6 +651,7 @@ function readQuizForm(formData: FormData): {
   const minutes = Number(formData.get("time_limit_min"));
   const passPercent = Number(formData.get("pass_percent"));
   const maxAttempts = Number(formData.get("max_attempts"));
+  const perAttemptRaw = Number(formData.get("questions_per_attempt"));
   const sortOrder = Number(formData.get("sort_order"));
   const isPublished = formData.get("is_published") === "on" || formData.get("is_published") === "true";
 
@@ -610,6 +662,8 @@ function readQuizForm(formData: FormData): {
     error = "Pass mark must be between 0 and 100.";
   else if (!maxAttempts || Number.isNaN(maxAttempts) || maxAttempts < 1)
     error = "Attempts must be at least 1.";
+  else if (!Number.isNaN(perAttemptRaw) && perAttemptRaw < 0)
+    error = "Questions per attempt can't be negative (use 0 for all).";
 
   return {
     title,
@@ -617,6 +671,7 @@ function readQuizForm(formData: FormData): {
     timeLimitSec: Math.round((Number.isNaN(minutes) ? 0 : minutes) * 60),
     passPercent: Number.isNaN(passPercent) ? 0 : passPercent,
     maxAttempts: Number.isNaN(maxAttempts) ? QUIZ_DEFAULT_MAX_ATTEMPTS : maxAttempts,
+    questionsPerAttempt: Number.isNaN(perAttemptRaw) || perAttemptRaw < 0 ? 0 : Math.floor(perAttemptRaw),
     isPublished,
     sortOrder: Number.isNaN(sortOrder) ? 0 : sortOrder,
     error,
@@ -629,8 +684,8 @@ export async function createQuiz(formData: FormData): Promise<{ error?: string }
   if (f.error) return { error: f.error };
   try {
     await sql`
-      INSERT INTO quizzes (title, description, time_limit_sec, pass_percent, max_attempts, is_published, sort_order)
-      VALUES (${f.title}, ${f.description}, ${f.timeLimitSec}, ${f.passPercent}, ${f.maxAttempts}, ${f.isPublished}, ${f.sortOrder})
+      INSERT INTO quizzes (title, description, time_limit_sec, pass_percent, max_attempts, questions_per_attempt, is_published, sort_order)
+      VALUES (${f.title}, ${f.description}, ${f.timeLimitSec}, ${f.passPercent}, ${f.maxAttempts}, ${f.questionsPerAttempt}, ${f.isPublished}, ${f.sortOrder})
     `;
   } catch (e) {
     return { error: e instanceof Error ? `Could not create: ${e.message}` : "Could not create quiz." };
@@ -648,6 +703,7 @@ export async function updateQuiz(id: number, formData: FormData): Promise<{ erro
       UPDATE quizzes
       SET title = ${f.title}, description = ${f.description}, time_limit_sec = ${f.timeLimitSec},
           pass_percent = ${f.passPercent}, max_attempts = ${f.maxAttempts},
+          questions_per_attempt = ${f.questionsPerAttempt},
           is_published = ${f.isPublished}, sort_order = ${f.sortOrder}
       WHERE id = ${id}
     `;

@@ -3792,6 +3792,21 @@ function QuizTab({
               />
             </label>
           </div>
+          <label className="text-xs text-slate-500 block">
+            Questions per attempt (0 = all)
+            <input
+              name="questions_per_attempt"
+              type="number"
+              min="0"
+              step="1"
+              defaultValue={0}
+              className={fieldClass()}
+            />
+          </label>
+          <p className="text-slate-400 text-xs -mt-1">
+            Draw this many random questions from the pool each attempt. Leave 0 to show every
+            question. Order is always randomised.
+          </p>
           <label className="flex items-center gap-2 text-sm">
             <input name="is_published" type="checkbox" className="h-4 w-4 accent-brand-600" />
             Publish now (students can see &amp; attempt it)
@@ -3819,8 +3834,12 @@ function QuizTab({
               <div className="min-w-0">
                 <p className="font-medium truncate">{q.title}</p>
                 <p className="text-slate-400 text-xs">
-                  {q.question_count} Qs · {Math.round(q.time_limit_sec / 60)} min · pass{" "}
-                  {q.pass_percent}% · {q.attempt_count} attempts
+                  {q.question_count} Qs
+                  {q.questions_per_attempt > 0 && (
+                    <> · shows {q.questions_per_attempt} random</>
+                  )}{" "}
+                  · {Math.round(q.time_limit_sec / 60)} min · pass {q.pass_percent}% ·{" "}
+                  {q.attempt_count} attempts
                 </p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
@@ -4192,6 +4211,16 @@ function QuizEditModal({ quizId, onClose }: { quizId: number; onClose: () => voi
                     />
                   </label>
                 </div>
+                <label className="text-xs text-slate-500 block">
+                  Questions per attempt (0 = all, {detail.questions.length} in pool)
+                  <input
+                    name="questions_per_attempt"
+                    type="number"
+                    min="0"
+                    defaultValue={detail.questions_per_attempt}
+                    className={fieldClass()}
+                  />
+                </label>
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     name="is_published"
