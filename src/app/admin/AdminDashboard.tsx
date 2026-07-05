@@ -3588,6 +3588,10 @@ function LeaveItem({ leave }: { leave: LeaveRow }) {
   const [pending, start] = useTransition();
   const [feedback, setFeedback] = useState(leave.feedback ?? "");
   const [error, setError] = useState<string | null>(null);
+  // Reviewed requests show a clean read-only summary by default (like the
+  // student sees). "Edit decision" reopens the controls to change it.
+  const isReviewed = leave.status !== "pending";
+  const [editing, setEditing] = useState(false);
 
   const statusMeta: Record<LeaveRow["status"], { label: string; chip: string }> = {
     pending: { label: "pending", chip: "bg-amber-100 text-amber-700" },
@@ -3607,6 +3611,7 @@ function LeaveItem({ leave }: { leave: LeaveRow }) {
         setError(res.error);
         return;
       }
+      setEditing(false);
       router.refresh();
     });
   }
@@ -3654,45 +3659,91 @@ function LeaveItem({ leave }: { leave: LeaveRow }) {
       </p>
       <p className="mt-1 text-sm whitespace-pre-line">{leave.reason}</p>
 
-      <textarea
-        value={feedback}
-        onChange={(e) => setFeedback(e.target.value)}
-        rows={2}
-        placeholder="Feedback for the student (optional)"
-        className={fieldClass() + " mt-2"}
-      />
+      {isReviewed && !editing ? (
+        <>
+          {/* Reviewed: clean read-only summary (mirrors the student's view). */}
+          {leave.feedback ? (
+            <div className="mt-2 rounded-lg bg-brand-50 border border-brand-100 px-3 py-2">
+              <p className="text-xs font-semibold text-brand-700">Your note</p>
+              <p className="text-sm whitespace-pre-line">{leave.feedback}</p>
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-slate-400 italic">No note left for the student.</p>
+          )}
 
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <button
-          onClick={() => review("approved")}
-          disabled={pending}
-          className="text-xs rounded-lg bg-emerald-600 text-white px-3 py-1.5 font-semibold disabled:opacity-50"
-        >
-          Approve
-        </button>
-        <button
-          onClick={() => review("rejected")}
-          disabled={pending}
-          className="text-xs rounded-lg bg-rose-600 text-white px-3 py-1.5 font-semibold disabled:opacity-50"
-        >
-          Reject
-        </button>
-        <button
-          onClick={() => review("pending")}
-          disabled={pending}
-          className="text-xs rounded-lg border border-slate-300 text-slate-600 px-2 py-1.5 disabled:opacity-50"
-          title="Save the note without approving or rejecting yet"
-        >
-          Save note only
-        </button>
-        <button
-          onClick={onDelete}
-          disabled={pending}
-          className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1.5 disabled:opacity-50 ml-auto"
-        >
-          Delete
-        </button>
-      </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setEditing(true)}
+              disabled={pending}
+              className="text-xs rounded-lg border border-slate-300 text-slate-600 px-3 py-1.5 disabled:opacity-50"
+            >
+              Edit decision
+            </button>
+            <button
+              onClick={onDelete}
+              disabled={pending}
+              className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1.5 disabled:opacity-50 ml-auto"
+            >
+              Delete
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <textarea
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
+            rows={2}
+            placeholder="Feedback for the student (optional)"
+            className={fieldClass() + " mt-2"}
+          />
+
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => review("approved")}
+              disabled={pending}
+              className="text-xs rounded-lg bg-emerald-600 text-white px-3 py-1.5 font-semibold disabled:opacity-50"
+            >
+              Approve
+            </button>
+            <button
+              onClick={() => review("rejected")}
+              disabled={pending}
+              className="text-xs rounded-lg bg-rose-600 text-white px-3 py-1.5 font-semibold disabled:opacity-50"
+            >
+              Reject
+            </button>
+            <button
+              onClick={() => review("pending")}
+              disabled={pending}
+              className="text-xs rounded-lg border border-slate-300 text-slate-600 px-2 py-1.5 disabled:opacity-50"
+              title="Save the note without approving or rejecting yet"
+            >
+              Save note only
+            </button>
+            {isReviewed && (
+              <button
+                onClick={() => {
+                  setFeedback(leave.feedback ?? "");
+                  setEditing(false);
+                  setError(null);
+                }}
+                disabled={pending}
+                className="text-xs rounded-lg border border-slate-300 text-slate-600 px-2 py-1.5 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            )}
+            <button
+              onClick={onDelete}
+              disabled={pending}
+              className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1.5 disabled:opacity-50 ml-auto"
+            >
+              Delete
+            </button>
+          </div>
+        </>
+      )}
       {error && <p className="text-rose-600 text-xs mt-1">{error}</p>}
     </li>
   );
