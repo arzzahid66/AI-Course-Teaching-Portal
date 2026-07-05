@@ -20,7 +20,7 @@ export default function InstallButton() {
       setIsInstalled(true);
       return;
     }
-
+    
     // iOS detection
     const ios =
       /iphone|ipad|ipod/i.test(navigator.userAgent) && !("MSStream" in window);
