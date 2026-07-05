@@ -361,6 +361,34 @@ export async function getPortalData(): Promise<PortalData> {
 // ---------------------------------------------------------------------------
 // Request leave from the next class (student → tutor)
 // ---------------------------------------------------------------------------
+
+/**
+ * Self-heal the `leave_requests` table. Migrations (v10) are applied manually in
+ * Neon, so a production DB may not have this table yet — that must never crash
+ * the leave flow. Creating it here (idempotent) makes the feature work even if
+ * the migration was never run. Mirrors migration_v10.sql.
+ */
+async function ensureLeaveRequestsTable(): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS leave_requests (
+      id           serial PRIMARY KEY,
+      student_id   int  NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      session_id   int  REFERENCES sessions(id) ON DELETE SET NULL,
+      lesson_title text,
+      lesson_at    timestamptz,
+      reason       text NOT NULL,
+      status       text NOT NULL DEFAULT 'pending'
+                     CHECK (status IN ('pending', 'approved', 'rejected')),
+      feedback     text,
+      created_at   timestamptz NOT NULL DEFAULT now(),
+      reviewed_at  timestamptz
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_leave_student ON leave_requests(student_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_leave_status  ON leave_requests(status)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_leave_created ON leave_requests(created_at DESC)`;
+}
+
 export async function submitLeaveRequest(
   formData: FormData
 ): Promise<{ error?: string }> {
@@ -370,6 +398,15 @@ export async function submitLeaveRequest(
   if (!reason) return { error: "Please tell your tutor why you need leave." };
   if (reason.length > 1000) {
     return { error: "Reason is too long (max 1000 characters)." };
+  }
+
+  // Make sure the table exists before we touch it — a missing table would
+  // otherwise throw an uncaught error and break the whole page.
+  try {
+    await ensureLeaveRequestsTable();
+  } catch (e) {
+    console.error("[portal] ensure leave_requests table failed:", e);
+    return { error: "Could not send your leave request. Please try again." };
   }
 
   // Tie the request to the next scheduled class (if one exists) and snapshot its

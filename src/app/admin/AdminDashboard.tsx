@@ -3998,7 +3998,6 @@ function QuizScoreboardCard({ scoreboard }: { scoreboard: QuizScoreboard }) {
 function QuizRequestItem({ req }: { req: QuizReattemptRow }) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [feedback, setFeedback] = useState(req.feedback ?? "");
   const [error, setError] = useState<string | null>(null);
 
   const meta: Record<QuizReattemptRow["status"], { label: string; chip: string }> = {
@@ -4008,11 +4007,10 @@ function QuizRequestItem({ req }: { req: QuizReattemptRow }) {
   };
   const m = meta[req.status];
 
-  function review(status: "approved" | "rejected" | "pending") {
+  function review(status: "approved" | "rejected") {
     setError(null);
     const fd = new FormData();
     fd.set("status", status);
-    fd.set("feedback", feedback);
     start(async () => {
       const res = await reviewQuizReattemptRequest(req.id, fd);
       if (res.error) {
@@ -4051,13 +4049,6 @@ function QuizRequestItem({ req }: { req: QuizReattemptRow }) {
       </div>
       <p className="mt-2 text-xs font-semibold text-brand-700">{req.quiz_title}</p>
 
-      <textarea
-        value={feedback}
-        onChange={(e) => setFeedback(e.target.value)}
-        rows={2}
-        placeholder="Feedback for the student (optional)"
-        className={fieldClass() + " mt-2"}
-      />
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <button
           onClick={() => review("approved")}
@@ -4072,14 +4063,6 @@ function QuizRequestItem({ req }: { req: QuizReattemptRow }) {
           className="text-xs rounded-lg bg-rose-600 text-white px-3 py-1.5 font-semibold disabled:opacity-50"
         >
           Reject
-        </button>
-        <button
-          onClick={() => review("pending")}
-          disabled={pending}
-          className="text-xs rounded-lg border border-slate-300 text-slate-600 px-2 py-1.5 disabled:opacity-50"
-          title="Save the note without approving or rejecting yet"
-        >
-          Save note only
         </button>
         <button
           onClick={onDelete}
