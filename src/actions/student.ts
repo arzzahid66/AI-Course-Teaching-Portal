@@ -63,7 +63,7 @@ export type AttendanceEntry = {
 };
 
 export type LedgerEntry = {
-  type: "penalty" | "payment";
+  type: "penalty" | "payment" | "waiver";
   amount: number;
   reason: string | null;
   created_at: string;
@@ -132,7 +132,7 @@ type SessionRow = {
 async function getBalance(studentId: number): Promise<number> {
   const rows = (await sql`
     SELECT COALESCE(
-      SUM(CASE WHEN type = 'penalty' THEN amount ELSE -amount END), 0
+      SUM(CASE WHEN type = 'penalty' THEN amount WHEN type = 'payment' THEN -amount ELSE 0 END), 0
     ) AS balance
     FROM ledger WHERE student_id = ${studentId}
   `) as { balance: string }[];

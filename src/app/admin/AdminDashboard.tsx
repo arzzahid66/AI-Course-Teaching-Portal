@@ -1140,8 +1140,17 @@ function StudentDetailModal({
                     {l.reason || l.type}
                     <span className="text-slate-400 text-xs"> · {fmt(l.created_at)}</span>
                   </span>
-                  <span className={l.type === "penalty" ? "text-rose-600" : "text-emerald-600"}>
-                    {l.type === "penalty" ? "+" : "−"}Rs {l.amount}
+                  <span
+                    className={
+                      l.type === "penalty"
+                        ? "text-rose-600"
+                        : l.type === "waiver"
+                          ? "text-amber-600"
+                          : "text-emerald-600"
+                    }
+                  >
+                    {l.type === "penalty" ? "+" : l.type === "waiver" ? "" : "−"}Rs {l.amount}
+                    {l.type === "waiver" ? " waived" : ""}
                   </span>
                 </li>
               ))}
@@ -1210,6 +1219,7 @@ function LedgerRow({
           <select name="type" defaultValue={entry.type} className={fieldClass()}>
             <option value="penalty">Fee (penalty)</option>
             <option value="payment">Payment</option>
+            <option value="waiver">Leave (waived)</option>
           </select>
           <input
             name="amount"
@@ -1262,8 +1272,17 @@ function LedgerRow({
         </span>
       </span>
       <div className="flex items-center gap-2 shrink-0">
-        <span className={entry.type === "penalty" ? "text-rose-600" : "text-emerald-600"}>
-          {entry.type === "penalty" ? "+" : "−"}Rs {entry.amount}
+        <span
+          className={
+            entry.type === "penalty"
+              ? "text-rose-600"
+              : entry.type === "waiver"
+                ? "text-amber-600"
+                : "text-emerald-600"
+          }
+        >
+          {entry.type === "penalty" ? "+" : entry.type === "waiver" ? "" : "−"}Rs {entry.amount}
+          {entry.type === "waiver" ? " waived" : ""}
         </span>
         <button
           onClick={() => setEditing(true)}

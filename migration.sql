@@ -45,13 +45,15 @@ CREATE TABLE IF NOT EXISTS attendance (
 );
 
 -- ---------------------------------------------------------------------------
--- ledger (penalties add to balance, payments reduce it)
--- balance = SUM(penalty.amount) - SUM(payment.amount)
+-- ledger (penalties add to balance, payments reduce it, waivers are forgiven)
+-- balance = SUM(penalty.amount) - SUM(payment.amount)  [waivers count as 0]
+-- A 'waiver' is a manual leave the tutor grants: the fine stays on record but
+-- no longer counts against the student.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS ledger (
   id         serial PRIMARY KEY,
   student_id int NOT NULL REFERENCES students(id),
-  type       text NOT NULL CHECK (type IN ('penalty', 'payment')),
+  type       text NOT NULL CHECK (type IN ('penalty', 'payment', 'waiver')),
   amount     numeric NOT NULL,
   reason     text,
   session_id int,
@@ -117,3 +119,11 @@ CREATE INDEX IF NOT EXISTS idx_sessions_is_open ON sessions(is_open);
 CREATE INDEX IF NOT EXISTS idx_topics_covered ON topics(is_covered);
 CREATE INDEX IF NOT EXISTS idx_astatus_assignment ON assignment_status(assignment_id);
 CREATE INDEX IF NOT EXISTS idx_astatus_student ON assignment_status(student_id);
+
+-- ---------------------------------------------------------------------------
+-- Widen the ledger type check to allow 'waiver' (manual leave) on databases
+-- that were created before this type existed. Safe to run repeatedly.
+-- ---------------------------------------------------------------------------
+ALTER TABLE ledger DROP CONSTRAINT IF EXISTS ledger_type_check;
+ALTER TABLE ledger ADD CONSTRAINT ledger_type_check
+  CHECK (type IN ('penalty', 'payment', 'waiver'));

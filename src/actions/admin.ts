@@ -72,7 +72,7 @@ export async function getStudents(): Promise<StudentRow[]> {
       (s.password_hash IS NOT NULL) AS has_login,
       s.status,
       COALESCE(
-        (SELECT SUM(CASE WHEN l.type = 'penalty' THEN l.amount ELSE -l.amount END)
+        (SELECT SUM(CASE WHEN l.type = 'penalty' THEN l.amount WHEN l.type = 'payment' THEN -l.amount ELSE 0 END)
          FROM ledger l WHERE l.student_id = s.id), 0
       ) AS balance
     FROM students s
@@ -980,7 +980,7 @@ export async function getStudentDetail(studentId: number): Promise<StudentDetail
   const base = (await sql`
     SELECT s.id, s.name, s.email, s.password_plain,
       COALESCE(
-        (SELECT SUM(CASE WHEN l.type = 'penalty' THEN l.amount ELSE -l.amount END)
+        (SELECT SUM(CASE WHEN l.type = 'penalty' THEN l.amount WHEN l.type = 'payment' THEN -l.amount ELSE 0 END)
          FROM ledger l WHERE l.student_id = s.id), 0
       ) AS balance
     FROM students s WHERE s.id = ${studentId} LIMIT 1
@@ -1049,8 +1049,8 @@ export async function updateLedgerEntry(
   const amount = Number(formData.get("amount"));
   const reason = String(formData.get("reason") ?? "").trim();
 
-  if (type !== "penalty" && type !== "payment") {
-    return { error: "Type must be a fee or a payment." };
+  if (type !== "penalty" && type !== "payment" && type !== "waiver") {
+    return { error: "Type must be a fee, a payment or a leave waiver." };
   }
   if (!amount || Number.isNaN(amount) || amount <= 0) {
     return { error: "Enter a positive amount." };
@@ -1159,7 +1159,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
         SELECT COALESCE(SUM(CASE WHEN bal > 0 THEN bal ELSE 0 END), 0) AS outstanding
         FROM (
           SELECT student_id,
-            SUM(CASE WHEN type = 'penalty' THEN amount ELSE -amount END) AS bal
+            SUM(CASE WHEN type = 'penalty' THEN amount WHEN type = 'payment' THEN -amount ELSE 0 END) AS bal
           FROM ledger GROUP BY student_id
         ) t
       `) as { outstanding: string }[],
@@ -1202,10 +1202,10 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     async () =>
       (await sql`
         SELECT s.name,
-          SUM(CASE WHEN l.type = 'penalty' THEN l.amount ELSE -l.amount END) AS balance
+          SUM(CASE WHEN l.type = 'penalty' THEN l.amount WHEN l.type = 'payment' THEN -l.amount ELSE 0 END) AS balance
         FROM students s JOIN ledger l ON l.student_id = s.id
         GROUP BY s.id, s.name
-        HAVING SUM(CASE WHEN l.type = 'penalty' THEN l.amount ELSE -l.amount END) > 0
+        HAVING SUM(CASE WHEN l.type = 'penalty' THEN l.amount WHEN l.type = 'payment' THEN -l.amount ELSE 0 END) > 0
         ORDER BY balance DESC
         LIMIT 5
       `) as { name: string; balance: string }[],

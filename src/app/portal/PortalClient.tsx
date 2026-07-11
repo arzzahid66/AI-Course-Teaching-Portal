@@ -953,10 +953,15 @@ function RecordTab({ data }: { data: PortalData }) {
                 </div>
                 <span
                   className={
-                    l.type === "penalty" ? "text-rose-600" : "text-emerald-600"
+                    l.type === "penalty"
+                      ? "text-rose-600"
+                      : l.type === "waiver"
+                        ? "text-amber-600"
+                        : "text-emerald-600"
                   }
                 >
-                  {l.type === "penalty" ? "+" : "−"}Rs {l.amount}
+                  {l.type === "penalty" ? "+" : l.type === "waiver" ? "" : "−"}Rs {l.amount}
+                  {l.type === "waiver" ? " waived" : ""}
                 </span>
               </li>
             ))}
