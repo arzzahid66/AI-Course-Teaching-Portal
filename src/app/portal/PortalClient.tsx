@@ -1248,13 +1248,11 @@ function QuizRunner({
     }
   }, [remainingMs, doSubmit]);
 
-  function toggle(questionId: number, optionId: number) {
+  // Single choice per question: picking an option replaces any previous pick.
+  function select(questionId: number, optionId: number) {
     setSelections((prev) => {
       const next = new Map(prev);
-      const set = new Set(next.get(questionId) ?? []);
-      if (set.has(optionId)) set.delete(optionId);
-      else set.add(optionId);
-      next.set(questionId, set);
+      next.set(questionId, new Set([optionId]));
       return next;
     });
   }
@@ -1309,7 +1307,7 @@ function QuizRunner({
             <span className="text-slate-400 mr-1">Q{idx + 1}.</span>
             {q.body}
           </p>
-          <p className="text-slate-400 text-xs mb-3">Select all that apply.</p>
+          <p className="text-slate-400 text-xs mb-3">Select one option.</p>
           <div className="space-y-2">
             {q.options.map((o) => {
               const checked = selections.get(q.id)?.has(o.id) ?? false;
@@ -1323,9 +1321,10 @@ function QuizRunner({
                   }`}
                 >
                   <input
-                    type="checkbox"
+                    type="radio"
+                    name={`q-${q.id}`}
                     checked={checked}
-                    onChange={() => toggle(q.id, o.id)}
+                    onChange={() => select(q.id, o.id)}
                     className="h-4 w-4 accent-brand-600"
                   />
                   <span className="text-sm">{o.body}</span>
@@ -1403,13 +1402,65 @@ function QuizResultCard({
         <p className={`mt-3 font-semibold ${res.passed ? "text-emerald-600" : "text-rose-600"}`}>
           {res.passed ? "You passed! ✅" : "You didn't pass this time."}
         </p>
-        <button
-          onClick={onBack}
-          className="mt-5 w-full rounded-xl bg-brand-600 px-4 py-2.5 text-white font-semibold active:scale-[0.98] transition"
-        >
-          Back to quizzes
-        </button>
       </div>
+
+      {res.review.length > 0 && (
+        <div className="border-t border-slate-200 pt-4 mt-1">
+          <h3 className="font-bold mb-1">Review</h3>
+          <p className="text-slate-500 text-xs mb-4">
+            Green is the correct answer. Red is where your pick was wrong.
+          </p>
+          <div className="space-y-4">
+            {res.review.map((q, i) => (
+              <div key={q.id} className="rounded-xl border border-slate-200 p-3">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <p className="font-semibold text-sm">
+                    <span className="text-slate-400 mr-1">Q{i + 1}.</span>
+                    {q.body}
+                  </p>
+                  <span
+                    className={`shrink-0 text-xs rounded-full px-2 py-0.5 font-medium ${
+                      q.correct
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-rose-100 text-rose-700"
+                    }`}
+                  >
+                    {q.correct ? "correct" : "wrong"}
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  {q.options.map((o) => {
+                    // Right answer = green. Your wrong pick = red. Otherwise plain.
+                    const cls = o.isCorrect
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                      : o.selected
+                        ? "border-rose-300 bg-rose-50 text-rose-800"
+                        : "border-slate-200 text-slate-600";
+                    return (
+                      <div
+                        key={o.id}
+                        className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm ${cls}`}
+                      >
+                        <span>{o.body}</span>
+                        <span className="shrink-0 text-xs font-medium">
+                          {o.isCorrect ? "✓ correct" : o.selected ? "✗ your pick" : ""}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <button
+        onClick={onBack}
+        className="mt-5 w-full rounded-xl bg-brand-600 px-4 py-2.5 text-white font-semibold active:scale-[0.98] transition"
+      >
+        Back to quizzes
+      </button>
     </Card>
   );
 }

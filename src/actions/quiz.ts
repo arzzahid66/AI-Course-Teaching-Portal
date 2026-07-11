@@ -384,6 +384,22 @@ async function loadQuestionsByIds(ids: number[]): Promise<QuizAttemptQuestion[]>
     }));
 }
 
+/** One option as shown on the post-submit review screen. */
+export type QuizReviewOption = {
+  id: number;
+  body: string;
+  isCorrect: boolean; // part of the answer key
+  selected: boolean; // the student picked this one
+};
+
+/** One question on the post-submit review screen. */
+export type QuizReviewQuestion = {
+  id: number;
+  body: string;
+  correct: boolean; // did the student get this question right
+  options: QuizReviewOption[];
+};
+
 export type SubmitQuizResult =
   | {
       ok: true;
@@ -392,6 +408,7 @@ export type SubmitQuizResult =
       percent: number;
       passed: boolean;
       passPercent: number;
+      review: QuizReviewQuestion[];
     }
   | { ok: false; error: string };
 
@@ -427,19 +444,6 @@ export async function submitQuizAttempt(
   const attempt = attemptRows[0];
   if (!attempt) return { ok: false, error: "Attempt not found." };
 
-  // Idempotent: if it was already finalized (e.g. auto-submitted on timeout),
-  // just return the stored result instead of re-scoring.
-  if (attempt.status === "submitted") {
-    return {
-      ok: true,
-      score: Number(attempt.score ?? 0),
-      total: Number(attempt.total ?? 0),
-      percent: Number(attempt.percent ?? 0),
-      passed: attempt.passed === true,
-      passPercent: Number(attempt.pass_percent),
-    };
-  }
-
   // Score ONLY the questions actually served for this attempt. Fall back to the
   // whole pool for older attempts saved before question_ids existed.
   const servedIds =
@@ -448,14 +452,22 @@ export async function submitQuizAttempt(
       : await getQuizQuestionIds(attempt.quiz_id);
   const total = servedIds.length;
 
-  const correctOptions = (await sql`
-    SELECT question_id, id
-    FROM quiz_options
-    WHERE is_correct = true AND question_id = ANY(${servedIds}::int[])
-  `) as { question_id: number; id: number }[];
+  // Load the served questions + ALL their options (with the answer key) so we
+  // can both score the attempt and build a review the student can learn from.
+  const questionRows = (await sql`
+    SELECT id, body FROM quiz_questions WHERE id = ANY(${servedIds}::int[])
+  `) as { id: number; body: string }[];
+  const questionById = new Map(questionRows.map((q) => [q.id, q.body]));
+
+  const optionRows = (await sql`
+    SELECT id, question_id, body, is_correct FROM quiz_options
+    WHERE question_id = ANY(${servedIds}::int[])
+    ORDER BY sort_order ASC, id ASC
+  `) as { id: number; question_id: number; body: string; is_correct: boolean }[];
 
   const correctByQuestion = new Map<number, Set<number>>();
-  for (const o of correctOptions) {
+  for (const o of optionRows) {
+    if (!o.is_correct) continue;
     if (!correctByQuestion.has(o.question_id)) correctByQuestion.set(o.question_id, new Set());
     correctByQuestion.get(o.question_id)!.add(o.id);
   }
@@ -465,20 +477,54 @@ export async function submitQuizAttempt(
     answerByQuestion.set(a.questionId, new Set(a.optionIds));
   }
 
+  // A question is correct only when the chosen set matches the correct set
+  // EXACTLY (all correct chosen, nothing wrong chosen).
+  const isQuestionCorrect = (qid: number): boolean => {
+    const correct = correctByQuestion.get(qid);
+    if (!correct || correct.size === 0) return false; // misconfigured question
+    const chosen = answerByQuestion.get(qid) ?? new Set<number>();
+    if (chosen.size !== correct.size) return false;
+    for (const id of chosen) if (!correct.has(id)) return false;
+    return true;
+  };
+
+  // Review, in the same order the student saw the questions.
+  const review: QuizReviewQuestion[] = servedIds
+    .filter((qid) => questionById.has(qid))
+    .map((qid) => {
+      const chosen = answerByQuestion.get(qid) ?? new Set<number>();
+      return {
+        id: qid,
+        body: questionById.get(qid)!,
+        correct: isQuestionCorrect(qid),
+        options: optionRows
+          .filter((o) => o.question_id === qid)
+          .map((o) => ({
+            id: o.id,
+            body: o.body,
+            isCorrect: o.is_correct,
+            selected: chosen.has(o.id),
+          })),
+      };
+    });
+
+  // Idempotent: if it was already finalized (e.g. auto-submitted on timeout),
+  // return the stored score — but still include the review to learn from.
+  if (attempt.status === "submitted") {
+    return {
+      ok: true,
+      score: Number(attempt.score ?? 0),
+      total: Number(attempt.total ?? 0),
+      percent: Number(attempt.percent ?? 0),
+      passed: attempt.passed === true,
+      passPercent: Number(attempt.pass_percent),
+      review,
+    };
+  }
+
   let score = 0;
   for (const qid of servedIds) {
-    const correct = correctByQuestion.get(qid);
-    if (!correct || correct.size === 0) continue; // misconfigured question can't be correct
-    const chosen = answerByQuestion.get(qid) ?? new Set<number>();
-    if (chosen.size !== correct.size) continue;
-    let allMatch = true;
-    for (const id of chosen) {
-      if (!correct.has(id)) {
-        allMatch = false;
-        break;
-      }
-    }
-    if (allMatch) score += 1;
+    if (isQuestionCorrect(qid)) score += 1;
   }
 
   const percent = total > 0 ? Math.round((score / total) * 100) : 0;
@@ -495,7 +541,7 @@ export async function submitQuizAttempt(
     return { ok: false, error: "Could not save your attempt. Please try again." };
   }
 
-  return { ok: true, score, total, percent, passed, passPercent: Number(attempt.pass_percent) };
+  return { ok: true, score, total, percent, passed, passPercent: Number(attempt.pass_percent), review };
 }
 
 /** Ask the tutor for another 2 attempts after failing all of them. */

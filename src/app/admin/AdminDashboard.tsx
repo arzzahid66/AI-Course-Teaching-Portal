@@ -4420,6 +4420,11 @@ function QuestionForm({
     setOptions((prev) => prev.map((o, idx) => (idx === i ? { ...o, ...patch } : o)));
   }
 
+  // Exactly one correct answer — picking one clears the rest (students select one).
+  function setCorrect(i: number) {
+    setOptions((prev) => prev.map((o, idx) => ({ ...o, correct: idx === i })));
+  }
+
   function onSave() {
     setError(null);
     const cleaned = options.map((o) => ({ body: o.body.trim(), correct: o.correct })).filter((o) => o.body);
@@ -4458,17 +4463,18 @@ function QuestionForm({
         className={fieldClass()}
       />
       <p className="text-xs text-slate-500 mt-2 mb-1">
-        Options — tick every correct one (more than one allowed).
+        Options — pick the one correct answer.
       </p>
       <div className="space-y-1.5">
         {options.map((o, i) => (
           <div key={i} className="flex items-center gap-2">
             <input
-              type="checkbox"
+              type="radio"
+              name="correct-option"
               checked={o.correct}
-              onChange={(e) => setOption(i, { correct: e.target.checked })}
+              onChange={() => setCorrect(i)}
               className="h-4 w-4 accent-emerald-600 shrink-0"
-              title="Correct?"
+              title="Correct answer?"
             />
             <input
               value={o.body}
