@@ -1,7 +1,7 @@
 {
   "name": "ClassGate",
   "short_name": "ClassGate",
-  "description": "Attendance gate for live classes",
+  "description": "Student portal for the AI Engineering Course",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f172a",

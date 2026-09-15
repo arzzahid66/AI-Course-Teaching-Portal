@@ -9,6 +9,12 @@ import {
   QUIZ_REATTEMPT_GRANT,
 } from "@/lib/constants";
 import { notifyAdmin, notifyStudent } from "@/lib/pushNotifications";
+import { getCurrentEnrollment } from "@/lib/course";
+
+/** Level of the student's current batch (null when not enrolled). */
+async function studentLevel(studentId: number): Promise<number | null> {
+  return (await getCurrentEnrollment(studentId))?.batch.level ?? null;
+}
 
 // ===========================================================================
 // Shared helpers
@@ -153,6 +159,7 @@ export async function getStudentQuizzes(): Promise<StudentQuiz[]> {
       (SELECT COUNT(*) FROM quiz_questions qq WHERE qq.quiz_id = q.id) AS question_count
     FROM quizzes q
     WHERE q.is_published = true
+      AND (q.level IS NULL OR q.level = ${await studentLevel(studentId)}::int)
     ORDER BY q.sort_order ASC, q.id ASC
   `) as {
     id: number;
@@ -270,7 +277,7 @@ export async function startQuizAttempt(quizId: number): Promise<StartQuizResult>
   await finalizeExpiredAttempts(studentId, quizId);
 
   const quizRows = (await sql`
-    SELECT id, title, time_limit_sec, pass_percent, questions_per_attempt, is_published
+    SELECT id, title, time_limit_sec, pass_percent, questions_per_attempt, is_published, level
     FROM quizzes WHERE id = ${quizId} LIMIT 1
   `) as {
     id: number;
@@ -279,9 +286,14 @@ export async function startQuizAttempt(quizId: number): Promise<StartQuizResult>
     pass_percent: number;
     questions_per_attempt: number;
     is_published: boolean;
+    level: number | null;
   }[];
   const quiz = quizRows[0];
-  if (!quiz || !quiz.is_published) {
+  if (
+    !quiz ||
+    !quiz.is_published ||
+    (quiz.level != null && quiz.level !== (await studentLevel(studentId)))
+  ) {
     return { ok: false, error: "This quiz is not available." };
   }
 
@@ -596,6 +608,7 @@ export type AdminQuizRow = {
   id: number;
   title: string;
   description: string | null;
+  level: number | null;
   time_limit_sec: number;
   pass_percent: number;
   max_attempts: number;
@@ -610,7 +623,7 @@ export async function getQuizzesAdmin(): Promise<AdminQuizRow[]> {
   await assertAdmin();
   const rows = (await sql`
     SELECT
-      q.id, q.title, q.description, q.time_limit_sec, q.pass_percent, q.max_attempts,
+      q.id, q.title, q.description, q.level, q.time_limit_sec, q.pass_percent, q.max_attempts,
       q.questions_per_attempt, q.is_published, q.sort_order,
       (SELECT COUNT(*) FROM quiz_questions qq WHERE qq.quiz_id = q.id) AS question_count,
       (SELECT COUNT(*) FROM quiz_attempts qa WHERE qa.quiz_id = q.id AND qa.status = 'submitted') AS attempt_count
@@ -633,6 +646,7 @@ export type QuizDetail = {
   id: number;
   title: string;
   description: string | null;
+  level: number | null;
   time_limit_sec: number;
   pass_percent: number;
   max_attempts: number;
@@ -645,7 +659,7 @@ export type QuizDetail = {
 export async function getQuizDetail(quizId: number): Promise<QuizDetail | null> {
   await assertAdmin();
   const quizRows = (await sql`
-    SELECT id, title, description, time_limit_sec, pass_percent, max_attempts,
+    SELECT id, title, description, level, time_limit_sec, pass_percent, max_attempts,
            questions_per_attempt, is_published, sort_order
     FROM quizzes WHERE id = ${quizId} LIMIT 1
   `) as Omit<QuizDetail, "questions">[];
@@ -684,6 +698,7 @@ export async function getQuizDetail(quizId: number): Promise<QuizDetail | null> 
 function readQuizForm(formData: FormData): {
   title: string;
   description: string | null;
+  level: number | null;
   timeLimitSec: number;
   passPercent: number;
   maxAttempts: number;
@@ -694,6 +709,7 @@ function readQuizForm(formData: FormData): {
 } {
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
+  const levelRaw = Number(formData.get("level"));
   const minutes = Number(formData.get("time_limit_min"));
   const passPercent = Number(formData.get("pass_percent"));
   const maxAttempts = Number(formData.get("max_attempts"));
@@ -714,6 +730,7 @@ function readQuizForm(formData: FormData): {
   return {
     title,
     description: description || null,
+    level: levelRaw === 1 || levelRaw === 2 ? levelRaw : null,
     timeLimitSec: Math.round((Number.isNaN(minutes) ? 0 : minutes) * 60),
     passPercent: Number.isNaN(passPercent) ? 0 : passPercent,
     maxAttempts: Number.isNaN(maxAttempts) ? QUIZ_DEFAULT_MAX_ATTEMPTS : maxAttempts,
@@ -730,8 +747,8 @@ export async function createQuiz(formData: FormData): Promise<{ error?: string }
   if (f.error) return { error: f.error };
   try {
     await sql`
-      INSERT INTO quizzes (title, description, time_limit_sec, pass_percent, max_attempts, questions_per_attempt, is_published, sort_order)
-      VALUES (${f.title}, ${f.description}, ${f.timeLimitSec}, ${f.passPercent}, ${f.maxAttempts}, ${f.questionsPerAttempt}, ${f.isPublished}, ${f.sortOrder})
+      INSERT INTO quizzes (title, description, level, time_limit_sec, pass_percent, max_attempts, questions_per_attempt, is_published, sort_order)
+      VALUES (${f.title}, ${f.description}, ${f.level}, ${f.timeLimitSec}, ${f.passPercent}, ${f.maxAttempts}, ${f.questionsPerAttempt}, ${f.isPublished}, ${f.sortOrder})
     `;
   } catch (e) {
     return { error: e instanceof Error ? `Could not create: ${e.message}` : "Could not create quiz." };
@@ -747,7 +764,7 @@ export async function updateQuiz(id: number, formData: FormData): Promise<{ erro
   try {
     await sql`
       UPDATE quizzes
-      SET title = ${f.title}, description = ${f.description}, time_limit_sec = ${f.timeLimitSec},
+      SET title = ${f.title}, description = ${f.description}, level = ${f.level}, time_limit_sec = ${f.timeLimitSec},
           pass_percent = ${f.passPercent}, max_attempts = ${f.maxAttempts},
           questions_per_attempt = ${f.questionsPerAttempt},
           is_published = ${f.isPublished}, sort_order = ${f.sortOrder}
@@ -991,6 +1008,116 @@ export async function getQuizScoreboard(): Promise<QuizScoreboard> {
   }
 
   return { quizzes, students, scores };
+}
+
+// ---------------------------------------------------------------------------
+// Leaderboard — competition view: each student's BEST score on their base
+// attempts only, filterable in the UI by quiz and gender. A student who had to
+// request extra attempts (used a re-attempt) is flagged `usedReattempt` so the
+// admin can keep the leaderboard to clean competitors — "winners" are the ones
+// who scored within their original attempts, without asking for more.
+// ---------------------------------------------------------------------------
+export type QuizLeaderboardEntry = {
+  studentId: number;
+  name: string;
+  gender: string | null;
+  /** Best % across this student's base (non-granted) submitted attempts. */
+  bestPercent: number;
+  passed: boolean;
+  /** How many base attempts they actually submitted. */
+  baseAttemptsUsed: number;
+  /** True if they went past their base attempts (used a granted re-attempt). */
+  usedReattempt: boolean;
+};
+
+export type QuizLeaderboard = {
+  quizzes: { id: number; title: string; maxAttempts: number }[];
+  /** Entries per quiz id (already ranked best-first); the UI filters further. */
+  byQuiz: Record<number, QuizLeaderboardEntry[]>;
+};
+
+/**
+ * Per-quiz leaderboard of every active student who submitted at least one base
+ * attempt. Only the first `max_attempts` attempts (in start order) count toward
+ * the score, so scores earned on granted re-attempts never inflate the ranking;
+ * such students are still listed but flagged `usedReattempt`. Ranked by best %.
+ */
+export async function getQuizLeaderboard(): Promise<QuizLeaderboard> {
+  await assertAdmin();
+
+  const quizRows = (await sql`
+    SELECT id, title, max_attempts FROM quizzes ORDER BY sort_order ASC, id ASC
+  `) as { id: number; title: string; max_attempts: number }[];
+
+  const students = (await sql`
+    SELECT id, name, gender FROM students WHERE status = 'active'
+  `) as { id: number; name: string; gender: string | null }[];
+  const studentById = new Map(students.map((s) => [s.id, s]));
+
+  const attempts = (await sql`
+    SELECT quiz_id, student_id, status, percent, passed, started_at
+    FROM quiz_attempts
+    ORDER BY started_at ASC
+  `) as {
+    quiz_id: number;
+    student_id: number;
+    status: "in_progress" | "submitted";
+    percent: number | null;
+    passed: boolean | null;
+    started_at: string;
+  }[];
+
+  const maxByQuiz = new Map(quizRows.map((q) => [q.id, Number(q.max_attempts)]));
+
+  // Group attempts by quiz+student, preserving the started_at ordering above.
+  const grouped = new Map<string, typeof attempts>();
+  for (const a of attempts) {
+    if (!studentById.has(a.student_id)) continue; // skip inactive / removed
+    const key = `${a.quiz_id}:${a.student_id}`;
+    (grouped.get(key) ?? grouped.set(key, []).get(key)!).push(a);
+  }
+
+  const byQuiz: Record<number, QuizLeaderboardEntry[]> = {};
+  for (const q of quizRows) byQuiz[q.id] = [];
+
+  for (const [key, list] of grouped) {
+    const [quizIdStr, studentIdStr] = key.split(":");
+    const quizId = Number(quizIdStr);
+    const studentId = Number(studentIdStr);
+    const student = studentById.get(studentId)!;
+    const maxA = maxByQuiz.get(quizId) ?? QUIZ_DEFAULT_MAX_ATTEMPTS;
+
+    // Base attempts = the first `maxA` the student took. Any beyond that came
+    // from an approved re-attempt request and must not count for competition.
+    const usedReattempt = list.length > maxA;
+    const base = list.slice(0, maxA).filter((a) => a.status === "submitted");
+    if (base.length === 0) continue; // no scored base attempt yet — not ranked
+
+    byQuiz[quizId].push({
+      studentId,
+      name: student.name,
+      gender: student.gender,
+      bestPercent: Math.max(...base.map((a) => (a.percent != null ? Number(a.percent) : 0))),
+      passed: base.some((a) => a.passed === true),
+      baseAttemptsUsed: base.length,
+      usedReattempt,
+    });
+  }
+
+  for (const id of Object.keys(byQuiz)) {
+    byQuiz[Number(id)].sort(
+      (a, b) => b.bestPercent - a.bestPercent || a.name.localeCompare(b.name)
+    );
+  }
+
+  return {
+    quizzes: quizRows.map((q) => ({
+      id: q.id,
+      title: q.title,
+      maxAttempts: Number(q.max_attempts),
+    })),
+    byQuiz,
+  };
 }
 
 export type QuizResultRow = {

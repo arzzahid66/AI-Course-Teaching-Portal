@@ -11,13 +11,17 @@ import {
   generateStudentToken,
   hashPassword,
 } from "@/lib/auth";
+import { normalizeMeetLink } from "@/lib/constants";
 import {
-  MISSED_CLASS_PENALTY,
-  MISSED_CLASS_REASON,
-  normalizeMeetLink,
-  parseResourceLinks,
-  serializeResourceLinks,
-} from "@/lib/constants";
+  createInvoicesForEnrollment,
+  insertPayment,
+  iso,
+  isoOrNull,
+  loadInvoices,
+  computeBatchProgress,
+  type InvoiceView,
+  type ProgressRow,
+} from "@/lib/course";
 import { recordLoginLog } from "@/lib/loginLog";
 import { notifyStudent } from "@/lib/pushNotifications";
 
@@ -53,6 +57,13 @@ export async function adminLogout(): Promise<void> {
 // ---------------------------------------------------------------------------
 // Students
 // ---------------------------------------------------------------------------
+export type StudentEnrollment = {
+  enrollment_id: number;
+  batch_id: number;
+  batch_name: string;
+  status: "active" | "completed" | "dropped";
+};
+
 export type StudentRow = {
   id: number;
   name: string;
@@ -61,53 +72,177 @@ export type StudentRow = {
   email: string | null;
   has_login: boolean;
   status: string;
-  balance: number;
+  enrollments: StudentEnrollment[];
 };
 
 export async function getStudents(): Promise<StudentRow[]> {
   await assertAdmin();
-  const rows = (await sql`
-    SELECT
-      s.id, s.name, s.whatsapp, s.gender, s.email,
-      (s.password_hash IS NOT NULL) AS has_login,
-      s.status,
-      COALESCE(
-        (SELECT SUM(CASE WHEN l.type = 'penalty' THEN l.amount WHEN l.type = 'payment' THEN -l.amount ELSE 0 END)
-         FROM ledger l WHERE l.student_id = s.id), 0
-      ) AS balance
-    FROM students s
-    ORDER BY s.created_at DESC, s.id DESC
-  `) as (Omit<StudentRow, "balance"> & { balance: string })[];
-  return rows.map((r) => ({ ...r, balance: Number(r.balance) }));
+  const students = (await sql`
+    SELECT id, name, whatsapp, gender, email, (password_hash IS NOT NULL) AS has_login, status
+    FROM students
+    ORDER BY created_at DESC, id DESC
+  `) as Omit<StudentRow, "enrollments">[];
+  const enrollments = (await sql`
+    SELECT e.id AS enrollment_id, e.student_id, e.batch_id, b.name AS batch_name, e.status
+    FROM enrollments e JOIN batches b ON b.id = e.batch_id
+    ORDER BY b.start_date DESC
+  `) as (StudentEnrollment & { student_id: number })[];
+  return students.map((s) => ({
+    ...s,
+    enrollments: enrollments
+      .filter((e) => e.student_id === s.id)
+      .map(({ student_id: _ignored, ...e }) => e),
+  }));
 }
 
-export async function addStudent(formData: FormData): Promise<{ error?: string }> {
+/** Create a student row; returns the new id or an error message. */
+async function insertStudent(input: {
+  name: string;
+  whatsapp: string | null;
+  gender: string | null;
+  email: string | null;
+  password: string;
+}): Promise<{ id?: number; error?: string }> {
+  const passwordHash = input.email && input.password ? hashPassword(input.password) : null;
+  const passwordPlain = input.email && input.password ? input.password : null;
+  try {
+    const rows = (await sql`
+      INSERT INTO students (name, whatsapp, gender, token, email, password_hash, password_plain)
+      VALUES (${input.name}, ${input.whatsapp}, ${input.gender}, ${generateStudentToken()},
+        ${input.email}, ${passwordHash}, ${passwordPlain})
+      RETURNING id
+    `) as { id: number }[];
+    return { id: rows[0].id };
+  } catch {
+    return { error: "Could not add student. Is that email already used?" };
+  }
+}
+
+/** Enroll a student into a batch and create that enrollment's monthly fees. */
+async function enroll(studentId: number, batchId: number): Promise<number> {
+  const rows = (await sql`
+    INSERT INTO enrollments (student_id, batch_id)
+    VALUES (${studentId}, ${batchId})
+    ON CONFLICT (student_id, batch_id) DO UPDATE SET status = 'active'
+    RETURNING id
+  `) as { id: number }[];
+  await createInvoicesForEnrollment(rows[0].id);
+  return rows[0].id;
+}
+
+/**
+ * Add a student, enroll them in the chosen intake, and (optionally) record a
+ * payment straight away — "full" pays every month, a number pays that amount
+ * oldest-month-first.
+ */
+export async function addStudent(formData: FormData): Promise<{ error?: string; receiptNo?: string }> {
   await assertAdmin();
   const name = String(formData.get("name") ?? "").trim();
   const whatsapp = String(formData.get("whatsapp") ?? "").trim();
   const gender = String(formData.get("gender") ?? "").trim();
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
-  if (!name) return { error: "Name is required." };
-  if (email && password.length < 4) {
-    return { error: "Password must be at least 4 characters." };
-  }
+  const batchId = Number(formData.get("batch_id"));
+  const payNow = String(formData.get("pay_now") ?? "none");
+  const method = String(formData.get("method") ?? "EasyPaisa").trim() || "EasyPaisa";
+  const reference = String(formData.get("reference") ?? "").trim();
 
-  const passwordHash = email && password ? hashPassword(password) : null;
-  const passwordPlain = email && password ? password : null;
-  try {
-    await sql`
-      INSERT INTO students (name, whatsapp, gender, token, email, password_hash, password_plain)
-      VALUES (
-        ${name}, ${whatsapp || null}, ${gender || null},
-        ${generateStudentToken()}, ${email || null}, ${passwordHash}, ${passwordPlain}
-      )
-    `;
-  } catch {
-    return { error: "Could not add student. Is that email already used?" };
+  if (!name) return { error: "Name is required." };
+  if (!batchId) return { error: "Pick the intake this student is joining." };
+  if (email && password.length < 4) return { error: "Password must be at least 4 characters." };
+
+  const created = await insertStudent({
+    name,
+    whatsapp: whatsapp || null,
+    gender: gender || null,
+    email: email || null,
+    password,
+  });
+  if (created.error || !created.id) return { error: created.error };
+
+  const enrollmentId = await enroll(created.id, batchId);
+
+  let receiptNo: string | undefined;
+  if (payNow === "month1" || payNow === "full") {
+    const invoices = await loadInvoices({ enrollmentId });
+    const amount =
+      payNow === "full"
+        ? invoices.reduce((s, i) => s + i.remaining, 0)
+        : invoices.find((i) => i.month_no === 1)?.remaining ?? 0;
+    if (amount > 0) {
+      const res = await insertPayment({
+        enrollmentId,
+        amount,
+        target: payNow === "full" ? "auto" : 1,
+        method,
+        reference: reference || null,
+        note: payNow === "full" ? "Full batch paid at enrollment" : null,
+        paidAt: null,
+      });
+      if (res.error) return { error: `Student added, but payment failed: ${res.error}` };
+      receiptNo = res.receiptNo;
+    }
   }
   revalidatePath("/admin");
-  return {};
+  return { receiptNo };
+}
+
+/**
+ * Bulk create from lines of "name, whatsapp, gender, email, password, paid".
+ * Everyone is enrolled into the chosen intake. The optional 6th column is
+ * "full" (pays every month) or an amount in Rs (paid oldest month first).
+ */
+export async function bulkAddStudents(
+  formData: FormData
+): Promise<{ created: number; error?: string; skipped: string[] }> {
+  await assertAdmin();
+  const batchId = Number(formData.get("batch_id"));
+  if (!batchId) return { created: 0, skipped: [], error: "Pick the intake first." };
+  const lines = String(formData.get("bulk") ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  let created = 0;
+  const skipped: string[] = [];
+  for (const line of lines) {
+    const parts = line.split(",").map((p) => p.trim());
+    const name = parts[0];
+    if (!name) continue;
+    const email = (parts[3] || "").toLowerCase() || null;
+    const res = await insertStudent({
+      name,
+      whatsapp: parts[1] || null,
+      gender: parts[2] || null,
+      email,
+      password: parts[4] || "",
+    });
+    if (!res.id) {
+      skipped.push(name);
+      continue;
+    }
+    const enrollmentId = await enroll(res.id, batchId);
+    const paid = (parts[5] || "").toLowerCase();
+    if (paid) {
+      const invoices = await loadInvoices({ enrollmentId });
+      const due = invoices.reduce((s, i) => s + i.remaining, 0);
+      const amount = paid === "full" ? due : Number(paid);
+      if (amount > 0 && !Number.isNaN(amount)) {
+        await insertPayment({
+          enrollmentId,
+          amount: Math.min(amount, due),
+          target: "auto",
+          method: "EasyPaisa",
+          reference: null,
+          note: "Recorded in bulk import",
+          paidAt: null,
+        });
+      }
+    }
+    created += 1;
+  }
+  revalidatePath("/admin");
+  return { created, skipped };
 }
 
 /** Give an existing student (or change) a login email + password. */
@@ -133,43 +268,6 @@ export async function setStudentCredentials(
   return {};
 }
 
-/**
- * Bulk create from lines of "name, whatsapp, gender, email, password".
- * Only name is required; email+password together enable a login.
- */
-export async function bulkAddStudents(formData: FormData): Promise<{ created: number; error?: string }> {
-  await assertAdmin();
-  const raw = String(formData.get("bulk") ?? "");
-  const lines = raw
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
-
-  let created = 0;
-  for (const line of lines) {
-    const parts = line.split(",").map((p) => p.trim());
-    const name = parts[0];
-    if (!name) continue;
-    const whatsapp = parts[1] || null;
-    const gender = parts[2] || null;
-    const email = (parts[3] || "").toLowerCase() || null;
-    const password = parts[4] || "";
-    const passwordHash = email && password ? hashPassword(password) : null;
-    const passwordPlain = email && password ? password : null;
-    try {
-      await sql`
-        INSERT INTO students (name, whatsapp, gender, token, email, password_hash, password_plain)
-        VALUES (${name}, ${whatsapp}, ${gender}, ${generateStudentToken()}, ${email}, ${passwordHash}, ${passwordPlain})
-      `;
-      created += 1;
-    } catch {
-      // skip duplicates / bad rows, keep going
-    }
-  }
-  revalidatePath("/admin");
-  return { created };
-}
-
 export async function setStudentStatus(
   studentId: number,
   status: "active" | "inactive"
@@ -189,7 +287,6 @@ export async function updateStudent(
   const whatsapp = String(formData.get("whatsapp") ?? "").trim();
   const gender = String(formData.get("gender") ?? "").trim();
   if (!name) return { error: "Name is required." };
-
   await sql`
     UPDATE students
     SET name = ${name}, whatsapp = ${whatsapp || null}, gender = ${gender || null}
@@ -199,49 +296,205 @@ export async function updateStudent(
   return {};
 }
 
-/**
- * Permanently delete a student AND all their records (attendance, ledger,
- * assignment statuses). Destructive — the UI confirms first. Children are
- * removed before the student to satisfy foreign keys.
- */
+/** Permanently delete a student. Enrollments, fees, payments, attendance cascade. */
 export async function deleteStudent(studentId: number): Promise<{ error?: string }> {
   await assertAdmin();
   try {
-    await sql`DELETE FROM assignment_status WHERE student_id = ${studentId}`;
-    await sql`DELETE FROM attendance WHERE student_id = ${studentId}`;
-    await sql`DELETE FROM ledger WHERE student_id = ${studentId}`;
     await sql`DELETE FROM students WHERE id = ${studentId}`;
   } catch (e) {
-    return {
-      error:
-        e instanceof Error
-          ? `Could not delete: ${e.message}`
-          : "Could not delete student.",
-    };
+    return { error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete student." };
   }
   revalidatePath("/admin");
   return {};
 }
 
+/** Enroll an existing student into another intake (e.g. Batch 1 → Batch 2). */
+export async function enrollStudent(studentId: number, batchId: number): Promise<{ error?: string }> {
+  await assertAdmin();
+  if (!studentId || !batchId) return { error: "Pick a student and an intake." };
+  try {
+    await enroll(studentId, batchId);
+  } catch (e) {
+    return { error: e instanceof Error ? `Could not enroll: ${e.message}` : "Could not enroll." };
+  }
+  revalidatePath("/admin");
+  return {};
+}
+
+export async function setEnrollmentStatus(
+  enrollmentId: number,
+  status: "active" | "completed" | "dropped"
+): Promise<void> {
+  await assertAdmin();
+  await sql`UPDATE enrollments SET status = ${status} WHERE id = ${enrollmentId}`;
+  revalidatePath("/admin");
+}
+
+/**
+ * Move a student to another intake: the old enrollment is marked dropped (its
+ * fee history stays), and a new enrollment with fresh fee months is created.
+ */
+export async function moveEnrollment(
+  enrollmentId: number,
+  toBatchId: number
+): Promise<{ error?: string }> {
+  await assertAdmin();
+  const rows = (await sql`
+    SELECT student_id, batch_id FROM enrollments WHERE id = ${enrollmentId}
+  `) as { student_id: number; batch_id: number }[];
+  if (!rows[0]) return { error: "Enrollment not found." };
+  if (rows[0].batch_id === toBatchId) return { error: "The student is already in that intake." };
+  await enroll(rows[0].student_id, toBatchId);
+  await sql`UPDATE enrollments SET status = 'dropped' WHERE id = ${enrollmentId}`;
+  revalidatePath("/admin");
+  return {};
+}
+
+export type StudentDetail = {
+  id: number;
+  name: string;
+  email: string | null;
+  password: string | null;
+  enrollments: (StudentEnrollment & {
+    invoices: InvoiceView[];
+    payments: PaymentRow[];
+    progress: ProgressRow | null;
+  })[];
+  attendance: { title: string; scheduled_at: string; status: string; batch_name: string }[];
+  homework: {
+    weekend_no: number;
+    title: string;
+    status: string;
+    marks: number | null;
+    link_url: string;
+    batch_name: string;
+  }[];
+};
+
+export type PaymentRow = {
+  id: number;
+  receipt_no: string;
+  month_no: number;
+  amount: number;
+  method: string;
+  reference: string | null;
+  note: string | null;
+  paid_at: string;
+};
+
+export async function getStudentDetail(studentId: number): Promise<StudentDetail> {
+  await assertAdmin();
+  const base = (await sql`
+    SELECT id, name, email, password_plain FROM students WHERE id = ${studentId} LIMIT 1
+  `) as { id: number; name: string; email: string | null; password_plain: string | null }[];
+
+  const enrollments = (await sql`
+    SELECT e.id AS enrollment_id, e.batch_id, b.name AS batch_name, e.status
+    FROM enrollments e JOIN batches b ON b.id = e.batch_id
+    WHERE e.student_id = ${studentId}
+    ORDER BY b.start_date DESC
+  `) as StudentEnrollment[];
+
+  const payments = (await sql`
+    SELECT p.id, p.receipt_no, i.month_no, i.enrollment_id, p.amount, p.method, p.reference,
+      p.note, p.paid_at
+    FROM payments p JOIN fee_invoices i ON i.id = p.invoice_id
+    WHERE p.student_id = ${studentId}
+    ORDER BY p.paid_at DESC, p.id DESC
+  `) as (Omit<PaymentRow, "paid_at"> & { enrollment_id: number; paid_at: Date })[];
+
+  const detailed = await Promise.all(
+    enrollments.map(async (e) => {
+      const progress = (await computeBatchProgress(e.batch_id)).find(
+        (p) => p.enrollment_id === e.enrollment_id
+      );
+      return {
+        ...e,
+        invoices: await loadInvoices({ enrollmentId: e.enrollment_id }),
+        payments: payments
+          .filter((p) => p.enrollment_id === e.enrollment_id)
+          .map(({ enrollment_id: _e, ...p }) => ({ ...p, paid_at: iso(p.paid_at) })),
+        progress: progress ?? null,
+      };
+    })
+  );
+
+  const attendance = (await sql`
+    SELECT s.title, s.scheduled_at, a.status, b.name AS batch_name
+    FROM attendance a
+    JOIN sessions s ON s.id = a.session_id
+    JOIN batches b ON b.id = s.batch_id
+    WHERE a.student_id = ${studentId}
+    ORDER BY s.scheduled_at DESC LIMIT 50
+  `) as { title: string; scheduled_at: Date; status: string; batch_name: string }[];
+
+  const homework = (await sql`
+    SELECT w.weekend_no, w.title, h.status, h.marks, h.link_url, b.name AS batch_name
+    FROM homework_submissions h
+    JOIN enrollments e ON e.id = h.enrollment_id
+    JOIN batches b ON b.id = e.batch_id
+    JOIN weekends w ON w.id = h.weekend_id
+    WHERE e.student_id = ${studentId}
+    ORDER BY b.start_date DESC, w.weekend_no ASC
+  `) as StudentDetail["homework"];
+
+  const row = base[0];
+  return {
+    id: row?.id ?? studentId,
+    name: row?.name ?? "",
+    email: row?.email ?? null,
+    password: row?.password_plain ?? null,
+    enrollments: detailed,
+    attendance: attendance.map((a) => ({ ...a, scheduled_at: iso(a.scheduled_at) })),
+    homework,
+  };
+}
+
 // ---------------------------------------------------------------------------
-// Sessions
+// Sessions (classes) — every class belongs to an intake
 // ---------------------------------------------------------------------------
 export type SessionRow = {
   id: number;
+  batch_id: number;
+  batch_name: string;
+  weekend_id: number | null;
+  weekend_no: number | null;
   title: string;
   scheduled_at: string;
   meet_link: string;
   code: string;
   is_open: boolean;
   closed_at: string | null;
+  present: number;
+  absent: number;
+  excused: number;
 };
 
 export type AttendeeRow = {
   student_id: number;
   name: string;
   email: string | null;
-  present: boolean;
+  status: "present" | "absent" | "excused" | null;
 };
+
+type SessionSqlRow = Omit<SessionRow, "scheduled_at" | "closed_at" | "present" | "absent" | "excused"> & {
+  scheduled_at: Date;
+  closed_at: Date | null;
+  present: string;
+  absent: string;
+  excused: string;
+};
+
+function toSessionRow(r: SessionSqlRow): SessionRow {
+  return {
+    ...r,
+    scheduled_at: iso(r.scheduled_at),
+    closed_at: isoOrNull(r.closed_at),
+    present: Number(r.present),
+    absent: Number(r.absent),
+    excused: Number(r.excused),
+  };
+}
 
 export async function getOpenSessionWithAttendance(): Promise<{
   session: SessionRow | null;
@@ -249,141 +502,134 @@ export async function getOpenSessionWithAttendance(): Promise<{
 }> {
   await assertAdmin();
   const sessions = (await sql`
-    SELECT id, title, scheduled_at, meet_link, code, is_open, closed_at
-    FROM sessions WHERE is_open = true
-    ORDER BY created_at DESC LIMIT 1
-  `) as SessionRow[];
-  const session = sessions[0] ?? null;
+    SELECT s.id, s.batch_id, b.name AS batch_name, s.weekend_id, w.weekend_no, s.title,
+      s.scheduled_at, s.meet_link, s.code, s.is_open, s.closed_at,
+      0 AS present, 0 AS absent, 0 AS excused
+    FROM sessions s
+    JOIN batches b ON b.id = s.batch_id
+    LEFT JOIN weekends w ON w.id = s.weekend_id
+    WHERE s.is_open = true
+    ORDER BY s.created_at DESC LIMIT 1
+  `) as SessionSqlRow[];
+  const session = sessions[0] ? toSessionRow(sessions[0]) : null;
   if (!session) return { session: null, attendees: [] };
-
-  const attendees = (await sql`
-    SELECT
-      s.id AS student_id,
-      s.name,
-      s.email,
-      (a.id IS NOT NULL AND a.status = 'present') AS present
-    FROM students s
-    LEFT JOIN attendance a
-      ON a.student_id = s.id AND a.session_id = ${session.id}
-    WHERE s.status = 'active'
-    ORDER BY present DESC, s.name ASC
-  `) as AttendeeRow[];
-
-  return { session, attendees };
+  return { session, attendees: await getSessionAttendees(session.id) };
 }
 
-export async function getRecentSessions(): Promise<SessionRow[]> {
+/** Everyone actively enrolled in the session's intake, with their status for it. */
+export async function getSessionAttendees(sessionId: number): Promise<AttendeeRow[]> {
   await assertAdmin();
   return (await sql`
-    SELECT id, title, scheduled_at, meet_link, code, is_open, closed_at
-    FROM sessions
-    ORDER BY created_at DESC
-    LIMIT 20
-  `) as SessionRow[];
+    SELECT st.id AS student_id, st.name, st.email, a.status
+    FROM sessions s
+    JOIN enrollments e ON e.batch_id = s.batch_id AND e.status = 'active'
+    JOIN students st ON st.id = e.student_id
+    LEFT JOIN attendance a ON a.session_id = s.id AND a.student_id = st.id
+    WHERE s.id = ${sessionId}
+    ORDER BY (a.status = 'present') DESC NULLS LAST, st.name ASC
+  `) as AttendeeRow[];
 }
 
+export async function getBatchSessions(batchId: number): Promise<SessionRow[]> {
+  await assertAdmin();
+  const rows = (await sql`
+    SELECT s.id, s.batch_id, b.name AS batch_name, s.weekend_id, w.weekend_no, s.title,
+      s.scheduled_at, s.meet_link, s.code, s.is_open, s.closed_at,
+      COUNT(a.id) FILTER (WHERE a.status = 'present') AS present,
+      COUNT(a.id) FILTER (WHERE a.status = 'absent') AS absent,
+      COUNT(a.id) FILTER (WHERE a.status = 'excused') AS excused
+    FROM sessions s
+    JOIN batches b ON b.id = s.batch_id
+    LEFT JOIN weekends w ON w.id = s.weekend_id
+    LEFT JOIN attendance a ON a.session_id = s.id
+    WHERE s.batch_id = ${batchId}
+    GROUP BY s.id, b.name, w.weekend_no
+    ORDER BY s.scheduled_at ASC
+  `) as SessionSqlRow[];
+  return rows.map(toSessionRow);
+}
+
+function readSessionForm(formData: FormData) {
+  return {
+    batchId: Number(formData.get("batch_id")),
+    title: String(formData.get("title") ?? "").trim(),
+    scheduledAt: String(formData.get("scheduled_at") ?? "").trim(),
+    meetLink: normalizeMeetLink(String(formData.get("meet_link") ?? "")),
+    code: String(formData.get("code") ?? "").trim(),
+  };
+}
+
+/** Start a brand-new (extra) class right now for an intake. */
 export async function createSession(formData: FormData): Promise<{ error?: string }> {
   await assertAdmin();
-  const title = String(formData.get("title") ?? "").trim();
-  const scheduledAt = String(formData.get("scheduled_at") ?? "").trim();
-  const meetLink = normalizeMeetLink(String(formData.get("meet_link") ?? ""));
-  const code = String(formData.get("code") ?? "").trim();
-
-  if (!title || !scheduledAt || !meetLink || !code) {
-    return { error: "All fields are required." };
+  const f = readSessionForm(formData);
+  if (!f.batchId) return { error: "Pick an intake first." };
+  if (!f.title || !f.scheduledAt || !f.meetLink || !f.code) {
+    return { error: "Title, time, Meet link and code are all required." };
   }
-
-  // Only one open session at a time: close any existing open one first.
   await sql`UPDATE sessions SET is_open = false, closed_at = now() WHERE is_open = true`;
-
   await sql`
-    INSERT INTO sessions (title, scheduled_at, meet_link, code, is_open)
-    VALUES (${title}, ${scheduledAt}, ${meetLink}, ${code}, true)
+    INSERT INTO sessions (batch_id, title, scheduled_at, meet_link, code, is_open)
+    VALUES (${f.batchId}, ${f.title}, ${f.scheduledAt}, ${f.meetLink}, ${f.code}, true)
+  `;
+  revalidatePath("/admin");
+  return {};
+}
+
+/** Schedule an extra class without opening it. Meet link + code can come later. */
+export async function scheduleSession(formData: FormData): Promise<{ error?: string }> {
+  await assertAdmin();
+  const f = readSessionForm(formData);
+  if (!f.batchId) return { error: "Pick an intake first." };
+  if (!f.title || !f.scheduledAt) return { error: "Title and time are required." };
+  await sql`
+    INSERT INTO sessions (batch_id, title, scheduled_at, meet_link, code, is_open)
+    VALUES (${f.batchId}, ${f.title}, ${f.scheduledAt}, ${f.meetLink}, ${f.code}, false)
   `;
   revalidatePath("/admin");
   return {};
 }
 
 /**
- * Close the open session and penalize every active student who has no
- * attendance row for it: insert an 'absent' attendance row + a Rs 200 penalty.
+ * Close the open session. Every actively enrolled student of its intake with no
+ * attendance row is marked absent. No fine — absences only lower the progress score.
  */
 export async function closeSession(sessionId: number): Promise<{ error?: string }> {
   await assertAdmin();
-
   const open = (await sql`
     SELECT id FROM sessions WHERE id = ${sessionId} AND is_open = true LIMIT 1
   `) as { id: number }[];
   if (!open[0]) return { error: "Session is not open." };
 
-  // Mark every active student without an attendance row as 'absent'.
   await sql`
     INSERT INTO attendance (student_id, session_id, status)
-    SELECT s.id, ${sessionId}, 'absent'
-    FROM students s
-    WHERE s.status = 'active'
-      AND NOT EXISTS (
-        SELECT 1 FROM attendance a
-        WHERE a.student_id = s.id AND a.session_id = ${sessionId}
-      )
+    SELECT e.student_id, s.id, 'absent'
+    FROM sessions s
+    JOIN enrollments e ON e.batch_id = s.batch_id AND e.status = 'active'
+    WHERE s.id = ${sessionId}
+    ON CONFLICT (student_id, session_id) DO NOTHING
   `;
-
-  // Add a penalty for each newly-absent student (those with status 'absent'
-  // for this session who don't already have a penalty for it).
-  await sql`
-    INSERT INTO ledger (student_id, type, amount, reason, session_id)
-    SELECT a.student_id, 'penalty', ${MISSED_CLASS_PENALTY}, ${MISSED_CLASS_REASON}, ${sessionId}
-    FROM attendance a
-    WHERE a.session_id = ${sessionId}
-      AND a.status = 'absent'
-      AND NOT EXISTS (
-        SELECT 1 FROM ledger l
-        WHERE l.student_id = a.student_id
-          AND l.session_id = ${sessionId}
-          AND l.type = 'penalty'
-      )
-  `;
-
   await sql`UPDATE sessions SET is_open = false, closed_at = now() WHERE id = ${sessionId}`;
   revalidatePath("/admin");
   return {};
 }
 
 /**
- * Schedule a future class WITHOUT opening it. Students see a countdown to it
- * but can't check in until the tutor starts it. Does not touch the live
- * session (you can schedule next week's class while today's is still open).
- */
-export async function scheduleSession(formData: FormData): Promise<{ error?: string }> {
-  await assertAdmin();
-  const title = String(formData.get("title") ?? "").trim();
-  const scheduledAt = String(formData.get("scheduled_at") ?? "").trim();
-  const meetLink = normalizeMeetLink(String(formData.get("meet_link") ?? ""));
-  const code = String(formData.get("code") ?? "").trim();
-
-  if (!title || !scheduledAt || !meetLink || !code) {
-    return { error: "All fields are required." };
-  }
-
-  await sql`
-    INSERT INTO sessions (title, scheduled_at, meet_link, code, is_open)
-    VALUES (${title}, ${scheduledAt}, ${meetLink}, ${code}, false)
-  `;
-  revalidatePath("/admin");
-  return {};
-}
-
-/**
- * Start (open) a previously scheduled session so students can check in.
- * Closes any other open session first (only one live class at a time) and
- * resets created_at to now() so the check-in window starts at the real start.
+ * Start a scheduled session so students can check in. It needs a Meet link and
+ * code first. Closes any other open session and restarts the check-in window.
  */
 export async function openSession(sessionId: number): Promise<{ error?: string }> {
   await assertAdmin();
+  const rows = (await sql`
+    SELECT meet_link, code FROM sessions WHERE id = ${sessionId}
+  `) as { meet_link: string; code: string }[];
+  if (!rows[0]) return { error: "Class not found." };
+  if (!rows[0].meet_link.trim() || !rows[0].code.trim()) {
+    return { error: "Add the Meet link and today's code (Edit) before starting this class." };
+  }
   await sql`UPDATE sessions SET is_open = false, closed_at = now() WHERE is_open = true`;
   await sql`
-    UPDATE sessions
-    SET is_open = true, closed_at = NULL, created_at = now()
+    UPDATE sessions SET is_open = true, closed_at = NULL, created_at = now()
     WHERE id = ${sessionId}
   `;
   revalidatePath("/admin");
@@ -396,266 +642,48 @@ export async function updateSession(
   formData: FormData
 ): Promise<{ error?: string }> {
   await assertAdmin();
-  const title = String(formData.get("title") ?? "").trim();
-  const scheduledAt = String(formData.get("scheduled_at") ?? "").trim();
-  const meetLink = normalizeMeetLink(String(formData.get("meet_link") ?? ""));
-  const code = String(formData.get("code") ?? "").trim();
-
-  if (!title || !scheduledAt || !meetLink || !code) {
-    return { error: "All fields are required." };
-  }
-
+  const f = readSessionForm(formData);
+  if (!f.title || !f.scheduledAt) return { error: "Title and time are required." };
   try {
     await sql`
       UPDATE sessions
-      SET title = ${title}, scheduled_at = ${scheduledAt}, meet_link = ${meetLink}, code = ${code}
+      SET title = ${f.title}, scheduled_at = ${f.scheduledAt}, meet_link = ${f.meetLink}, code = ${f.code}
       WHERE id = ${sessionId}
     `;
   } catch (e) {
-    return {
-      error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save session.",
-    };
+    return { error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save session." };
   }
   revalidatePath("/admin");
   return {};
 }
 
-/**
- * Permanently delete a session AND its attendance rows + any penalties that
- * were charged for it (so balances stay correct). Destructive — UI confirms.
- */
+/** Delete a session; its attendance rows cascade. */
 export async function deleteSession(sessionId: number): Promise<{ error?: string }> {
   await assertAdmin();
   try {
-    // Delete the fines (absence penalties), the attendance rows, and the
-    // session itself in ONE statement so it is atomic: a session can never end
-    // up removed while its fines still hang on the students' balances (or vice
-    // versa). The CTEs run first, clearing the rows that reference this session,
-    // then the final DELETE removes the session. Every student who was charged
-    // for this class gets that charge cleared.
-    await sql`
-      WITH cleared_fines AS (
-        DELETE FROM ledger WHERE session_id = ${sessionId}
-      ),
-      cleared_attendance AS (
-        DELETE FROM attendance WHERE session_id = ${sessionId}
-      )
-      DELETE FROM sessions WHERE id = ${sessionId}
-    `;
+    await sql`DELETE FROM sessions WHERE id = ${sessionId}`;
   } catch (e) {
-    return {
-      error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete session.",
-    };
+    return { error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete session." };
   }
   revalidatePath("/admin");
   return {};
 }
 
-// ---------------------------------------------------------------------------
-// Payments
-// ---------------------------------------------------------------------------
-export async function recordPayment(formData: FormData): Promise<{ error?: string }> {
-  await assertAdmin();
-  const studentId = Number(formData.get("student_id"));
-  const amount = Number(formData.get("amount"));
-  const reason = String(formData.get("reason") ?? "Payment received").trim();
-
-  if (!studentId || Number.isNaN(studentId)) return { error: "Pick a student." };
-  if (!amount || Number.isNaN(amount) || amount <= 0) {
-    return { error: "Enter a positive amount." };
-  }
-
-  await sql`
-    INSERT INTO ledger (student_id, type, amount, reason)
-    VALUES (${studentId}, 'payment', ${amount}, ${reason || "Payment received"})
-  `;
-  revalidatePath("/admin");
-  return {};
-}
-
-// ---------------------------------------------------------------------------
-// Topics (curriculum roadmap)
-// ---------------------------------------------------------------------------
-export type TopicRow = {
-  id: number;
-  title: string;
-  description: string | null;
-  planned_at: string | null;
-  is_covered: boolean;
-};
-
-export async function getTopics(): Promise<TopicRow[]> {
-  await assertAdmin();
-  return (await sql`
-    SELECT id, title, description, planned_at, is_covered
-    FROM topics
-    ORDER BY COALESCE(planned_at, created_at) ASC
-  `) as TopicRow[];
-}
-
-export async function createTopic(formData: FormData): Promise<{ error?: string }> {
-  await assertAdmin();
-  const title = String(formData.get("title") ?? "").trim();
-  const description = String(formData.get("description") ?? "").trim();
-  const plannedAt = String(formData.get("planned_at") ?? "").trim();
-  if (!title) return { error: "Title is required." };
-
-  await sql`
-    INSERT INTO topics (title, description, planned_at)
-    VALUES (${title}, ${description || null}, ${plannedAt || null})
-  `;
-  revalidatePath("/admin");
-  return {};
-}
-
-export async function updateTopic(
-  id: number,
-  formData: FormData
+/** Manually set (or clear) one student's attendance for a class. */
+export async function setAttendance(
+  sessionId: number,
+  studentId: number,
+  status: "present" | "absent" | "excused" | "none"
 ): Promise<{ error?: string }> {
   await assertAdmin();
-  const title = String(formData.get("title") ?? "").trim();
-  const description = String(formData.get("description") ?? "").trim();
-  const plannedAt = String(formData.get("planned_at") ?? "").trim();
-  if (!title) return { error: "Title is required." };
-
-  await sql`
-    UPDATE topics
-    SET title = ${title},
-        description = ${description || null},
-        planned_at = ${plannedAt || null}
-    WHERE id = ${id}
-  `;
-  revalidatePath("/admin");
-  return {};
-}
-
-export async function setTopicCovered(id: number, covered: boolean): Promise<void> {
-  await assertAdmin();
-  await sql`UPDATE topics SET is_covered = ${covered} WHERE id = ${id}`;
-  revalidatePath("/admin");
-}
-
-export async function deleteTopic(id: number): Promise<void> {
-  await assertAdmin();
-  await sql`DELETE FROM topics WHERE id = ${id}`;
-  revalidatePath("/admin");
-}
-
-// ---------------------------------------------------------------------------
-// Library (recorded lectures + slides / materials)
-// One universal list of resources. Each item may carry any number of recording
-// links (YouTube) and/or slides links (Google Drive), stored one-per-line in
-// `video_url` / `slides_url` (optionally named "Label | url"). Parse them with
-// parseResourceLinks() for display.
-// ---------------------------------------------------------------------------
-export type ResourceRow = {
-  id: number;
-  sort_order: number;
-  title: string;
-  description: string | null;
-  video_url: string | null;
-  slides_url: string | null;
-};
-
-export async function getResources(): Promise<ResourceRow[]> {
-  await assertAdmin();
-  return (await sql`
-    SELECT id, sort_order, title, description, video_url, slides_url
-    FROM resources
-    ORDER BY sort_order ASC, id DESC
-  `) as ResourceRow[];
-}
-
-/**
- * Pull the resource fields from a submitted form. `video_url` / `slides_url` are
- * multi-line textareas — each non-empty line is one link (optionally "Label |
- * url"), normalized and re-serialized so we always store clean absolute URLs.
- */
-function readResourceForm(formData: FormData): {
-  title: string;
-  description: string | null;
-  videoText: string | null;
-  slidesText: string | null;
-  hasAnyLink: boolean;
-  sortOrder: number;
-} {
-  const title = String(formData.get("title") ?? "").trim();
-  const description = String(formData.get("description") ?? "").trim();
-  const videos = parseResourceLinks(String(formData.get("video_url") ?? ""));
-  const slides = parseResourceLinks(String(formData.get("slides_url") ?? ""));
-  const sortOrder = Number(formData.get("sort_order"));
-  return {
-    title,
-    description: description || null,
-    videoText: videos.length ? serializeResourceLinks(videos) : null,
-    slidesText: slides.length ? serializeResourceLinks(slides) : null,
-    hasAnyLink: videos.length + slides.length > 0,
-    sortOrder: Number.isNaN(sortOrder) ? 0 : sortOrder,
-  };
-}
-
-export async function createResource(formData: FormData): Promise<{ error?: string }> {
-  await assertAdmin();
-  const { title, description, videoText, slidesText, hasAnyLink, sortOrder } =
-    readResourceForm(formData);
-  if (!title) return { error: "Title is required." };
-  if (!hasAnyLink) {
-    return { error: "Add at least one recording or slides link." };
-  }
-
-  try {
+  if (status === "none") {
+    await sql`DELETE FROM attendance WHERE session_id = ${sessionId} AND student_id = ${studentId}`;
+  } else {
     await sql`
-      INSERT INTO resources (sort_order, title, description, video_url, slides_url)
-      VALUES (${sortOrder}, ${title}, ${description}, ${videoText}, ${slidesText})
+      INSERT INTO attendance (student_id, session_id, status)
+      VALUES (${studentId}, ${sessionId}, ${status})
+      ON CONFLICT (student_id, session_id) DO UPDATE SET status = ${status}
     `;
-  } catch (e) {
-    return {
-      error: e instanceof Error ? `Could not add: ${e.message}` : "Could not add resource.",
-    };
-  }
-  revalidatePath("/admin");
-  return {};
-}
-
-export async function updateResource(
-  id: number,
-  formData: FormData
-): Promise<{ error?: string }> {
-  await assertAdmin();
-  const { title, description, videoText, slidesText, hasAnyLink, sortOrder } =
-    readResourceForm(formData);
-  if (!title) return { error: "Title is required." };
-  if (!hasAnyLink) {
-    return { error: "Add at least one recording or slides link." };
-  }
-
-  try {
-    await sql`
-      UPDATE resources
-      SET sort_order = ${sortOrder},
-          title = ${title},
-          description = ${description},
-          video_url = ${videoText},
-          slides_url = ${slidesText}
-      WHERE id = ${id}
-    `;
-  } catch (e) {
-    return {
-      error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save resource.",
-    };
-  }
-  revalidatePath("/admin");
-  return {};
-}
-
-export async function deleteResource(id: number): Promise<{ error?: string }> {
-  await assertAdmin();
-  try {
-    await sql`DELETE FROM resources WHERE id = ${id}`;
-  } catch (e) {
-    return {
-      error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete resource.",
-    };
   }
   revalidatePath("/admin");
   return {};
@@ -678,12 +706,13 @@ export type LoginLogRow = {
 
 export async function getLoginLogs(limit = 200): Promise<LoginLogRow[]> {
   await assertAdmin();
-  return (await sql`
+  const rows = (await sql`
     SELECT id, student_id, role, name, email, ip, user_agent, is_pwa, created_at
     FROM login_logs
     ORDER BY created_at DESC
     LIMIT ${limit}
-  `) as LoginLogRow[];
+  `) as (Omit<LoginLogRow, "created_at"> & { created_at: Date })[];
+  return rows.map((r) => ({ ...r, created_at: iso(r.created_at) }));
 }
 
 export async function clearLoginLogs(): Promise<{ error?: string }> {
@@ -691,550 +720,6 @@ export async function clearLoginLogs(): Promise<{ error?: string }> {
   await sql`DELETE FROM login_logs`;
   revalidatePath("/admin");
   return {};
-}
-
-// ---------------------------------------------------------------------------
-// Curriculum (course roadmap) — weeks with Part A / Part B + outcomes
-// ---------------------------------------------------------------------------
-export type CurriculumWeekRow = {
-  id: number;
-  sort_order: number;
-  title: string;
-  part_a: string | null;
-  part_b: string | null;
-};
-
-export type OutcomeRow = {
-  id: number;
-  sort_order: number;
-  body: string;
-};
-
-export async function getCurriculum(): Promise<CurriculumWeekRow[]> {
-  await assertAdmin();
-  return (await sql`
-    SELECT id, sort_order, title, part_a, part_b
-    FROM curriculum_weeks
-    ORDER BY sort_order ASC, id ASC
-  `) as CurriculumWeekRow[];
-}
-
-export async function createCurriculumWeek(formData: FormData): Promise<{ error?: string }> {
-  await assertAdmin();
-  const title = String(formData.get("title") ?? "").trim();
-  const partA = String(formData.get("part_a") ?? "").trim();
-  const partB = String(formData.get("part_b") ?? "").trim();
-  const sortOrder = Number(formData.get("sort_order"));
-  if (!title) return { error: "Title is required." };
-
-  await sql`
-    INSERT INTO curriculum_weeks (sort_order, title, part_a, part_b)
-    VALUES (${Number.isNaN(sortOrder) ? 0 : sortOrder}, ${title}, ${partA || null}, ${partB || null})
-  `;
-  revalidatePath("/admin");
-  return {};
-}
-
-export async function updateCurriculumWeek(
-  id: number,
-  formData: FormData
-): Promise<{ error?: string }> {
-  await assertAdmin();
-  const title = String(formData.get("title") ?? "").trim();
-  const partA = String(formData.get("part_a") ?? "").trim();
-  const partB = String(formData.get("part_b") ?? "").trim();
-  const sortOrder = Number(formData.get("sort_order"));
-  if (!title) return { error: "Title is required." };
-
-  try {
-    await sql`
-      UPDATE curriculum_weeks
-      SET sort_order = ${Number.isNaN(sortOrder) ? 0 : sortOrder},
-          title = ${title}, part_a = ${partA || null}, part_b = ${partB || null}
-      WHERE id = ${id}
-    `;
-  } catch (e) {
-    return {
-      error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save week.",
-    };
-  }
-  revalidatePath("/admin");
-  return {};
-}
-
-export async function deleteCurriculumWeek(id: number): Promise<{ error?: string }> {
-  await assertAdmin();
-  try {
-    await sql`DELETE FROM curriculum_weeks WHERE id = ${id}`;
-  } catch (e) {
-    return {
-      error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete week.",
-    };
-  }
-  revalidatePath("/admin");
-  return {};
-}
-
-export async function getOutcomes(): Promise<OutcomeRow[]> {
-  await assertAdmin();
-  return (await sql`
-    SELECT id, sort_order, body
-    FROM course_outcomes
-    ORDER BY sort_order ASC, id ASC
-  `) as OutcomeRow[];
-}
-
-export async function createOutcome(formData: FormData): Promise<{ error?: string }> {
-  await assertAdmin();
-  const body = String(formData.get("body") ?? "").trim();
-  const sortOrder = Number(formData.get("sort_order"));
-  if (!body) return { error: "Write the outcome first." };
-
-  await sql`
-    INSERT INTO course_outcomes (sort_order, body)
-    VALUES (${Number.isNaN(sortOrder) ? 0 : sortOrder}, ${body})
-  `;
-  revalidatePath("/admin");
-  return {};
-}
-
-export async function updateOutcome(
-  id: number,
-  formData: FormData
-): Promise<{ error?: string }> {
-  await assertAdmin();
-  const body = String(formData.get("body") ?? "").trim();
-  const sortOrder = Number(formData.get("sort_order"));
-  if (!body) return { error: "Write the outcome first." };
-
-  try {
-    await sql`
-      UPDATE course_outcomes
-      SET sort_order = ${Number.isNaN(sortOrder) ? 0 : sortOrder}, body = ${body}
-      WHERE id = ${id}
-    `;
-  } catch (e) {
-    return {
-      error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save outcome.",
-    };
-  }
-  revalidatePath("/admin");
-  return {};
-}
-
-export async function deleteOutcome(id: number): Promise<{ error?: string }> {
-  await assertAdmin();
-  try {
-    await sql`DELETE FROM course_outcomes WHERE id = ${id}`;
-  } catch (e) {
-    return {
-      error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete outcome.",
-    };
-  }
-  revalidatePath("/admin");
-  return {};
-}
-
-// ---------------------------------------------------------------------------
-// Assignments
-// ---------------------------------------------------------------------------
-export type AssignmentRow = {
-  id: number;
-  title: string;
-  description: string | null;
-  due_at: string | null;
-};
-
-export type AssignmentStudent = {
-  id: number;
-  name: string;
-  email: string | null;
-  whatsapp: string | null;
-};
-
-export type AssignmentMatrix = {
-  assignments: AssignmentRow[];
-  students: AssignmentStudent[];
-  // doneMap[`${assignmentId}:${studentId}`] === true when done
-  done: Record<string, boolean>;
-};
-
-export async function createAssignment(formData: FormData): Promise<{ error?: string }> {
-  await assertAdmin();
-  const title = String(formData.get("title") ?? "").trim();
-  const description = String(formData.get("description") ?? "").trim();
-  const dueAt = String(formData.get("due_at") ?? "").trim();
-  if (!title) return { error: "Title is required." };
-
-  await sql`
-    INSERT INTO assignments (title, description, due_at)
-    VALUES (${title}, ${description || null}, ${dueAt || null})
-  `;
-  revalidatePath("/admin");
-  return {};
-}
-
-export async function updateAssignment(
-  id: number,
-  formData: FormData
-): Promise<{ error?: string }> {
-  await assertAdmin();
-  const title = String(formData.get("title") ?? "").trim();
-  const description = String(formData.get("description") ?? "").trim();
-  const dueAt = String(formData.get("due_at") ?? "").trim();
-  if (!title) return { error: "Title is required." };
-
-  try {
-    await sql`
-      UPDATE assignments
-      SET title = ${title}, description = ${description || null}, due_at = ${dueAt || null}
-      WHERE id = ${id}
-    `;
-  } catch (e) {
-    return {
-      error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save assignment.",
-    };
-  }
-  revalidatePath("/admin");
-  return {};
-}
-
-export async function deleteAssignment(id: number): Promise<{ error?: string }> {
-  await assertAdmin();
-  try {
-    // assignment_status rows cascade on delete (see schema), so removing the
-    // assignment is enough.
-    await sql`DELETE FROM assignments WHERE id = ${id}`;
-  } catch (e) {
-    return {
-      error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete assignment.",
-    };
-  }
-  revalidatePath("/admin");
-  return {};
-}
-
-export async function getAssignmentMatrix(): Promise<AssignmentMatrix> {
-  await assertAdmin();
-  const assignments = (await sql`
-    SELECT id, title, description, due_at
-    FROM assignments
-    ORDER BY COALESCE(due_at, created_at) DESC
-  `) as AssignmentRow[];
-
-  const students = (await sql`
-    SELECT id, name, email, whatsapp FROM students WHERE status = 'active' ORDER BY name ASC
-  `) as AssignmentStudent[];
-
-  const statuses = (await sql`
-    SELECT assignment_id, student_id, status FROM assignment_status WHERE status = 'done'
-  `) as { assignment_id: number; student_id: number; status: string }[];
-
-  const done: Record<string, boolean> = {};
-  for (const s of statuses) {
-    done[`${s.assignment_id}:${s.student_id}`] = true;
-  }
-
-  return { assignments, students, done };
-}
-
-export async function setAssignmentStatus(
-  assignmentId: number,
-  studentId: number,
-  status: "done" | "pending"
-): Promise<void> {
-  await assertAdmin();
-  await sql`
-    INSERT INTO assignment_status (assignment_id, student_id, status, updated_at)
-    VALUES (${assignmentId}, ${studentId}, ${status}, now())
-    ON CONFLICT (assignment_id, student_id)
-    DO UPDATE SET status = ${status}, updated_at = now()
-  `;
-  revalidatePath("/admin");
-}
-
-// ---------------------------------------------------------------------------
-// Per-student detail (admin progress view)
-// ---------------------------------------------------------------------------
-export type StudentDetail = {
-  id: number;
-  name: string;
-  email: string | null;
-  password: string | null;
-  balance: number;
-  attendance: { title: string; scheduled_at: string; status: string }[];
-  ledger: {
-    id: number;
-    type: string;
-    amount: number;
-    reason: string | null;
-    created_at: string;
-    session_title: string | null;
-    session_scheduled_at: string | null;
-  }[];
-  assignments: { title: string; status: "pending" | "done" }[];
-};
-
-export async function getStudentDetail(studentId: number): Promise<StudentDetail> {
-  await assertAdmin();
-  const base = (await sql`
-    SELECT s.id, s.name, s.email, s.password_plain,
-      COALESCE(
-        (SELECT SUM(CASE WHEN l.type = 'penalty' THEN l.amount WHEN l.type = 'payment' THEN -l.amount ELSE 0 END)
-         FROM ledger l WHERE l.student_id = s.id), 0
-      ) AS balance
-    FROM students s WHERE s.id = ${studentId} LIMIT 1
-  `) as {
-    id: number;
-    name: string;
-    email: string | null;
-    password_plain: string | null;
-    balance: string;
-  }[];
-
-  const attendance = (await sql`
-    SELECT s.title, s.scheduled_at, a.status
-    FROM attendance a JOIN sessions s ON s.id = a.session_id
-    WHERE a.student_id = ${studentId}
-    ORDER BY s.scheduled_at DESC LIMIT 50
-  `) as { title: string; scheduled_at: string; status: string }[];
-
-  const ledger = (await sql`
-    SELECT
-      l.id, l.type, l.amount, l.reason, l.created_at,
-      s.title AS session_title,
-      s.scheduled_at AS session_scheduled_at
-    FROM ledger l
-    LEFT JOIN sessions s ON s.id = l.session_id
-    WHERE l.student_id = ${studentId}
-    ORDER BY l.created_at DESC LIMIT 50
-  `) as {
-    id: number;
-    type: string;
-    amount: string;
-    reason: string | null;
-    created_at: string;
-    session_title: string | null;
-    session_scheduled_at: string | null;
-  }[];
-
-  const assignments = (await sql`
-    SELECT a.title, COALESCE(st.status, 'pending') AS status
-    FROM assignments a
-    LEFT JOIN assignment_status st
-      ON st.assignment_id = a.id AND st.student_id = ${studentId}
-    ORDER BY COALESCE(a.due_at, a.created_at) DESC
-  `) as { title: string; status: "pending" | "done" }[];
-
-  const row = base[0];
-  return {
-    id: row?.id ?? studentId,
-    name: row?.name ?? "",
-    email: row?.email ?? null,
-    password: row?.password_plain ?? null,
-    balance: Number(row?.balance ?? 0),
-    attendance,
-    ledger: ledger.map((l) => ({ ...l, amount: Number(l.amount) })),
-    assignments,
-  };
-}
-
-/** Edit a single fee/payment ledger entry (type, amount, reason). */
-export async function updateLedgerEntry(
-  id: number,
-  formData: FormData
-): Promise<{ error?: string }> {
-  await assertAdmin();
-  const type = String(formData.get("type") ?? "").trim();
-  const amount = Number(formData.get("amount"));
-  const reason = String(formData.get("reason") ?? "").trim();
-
-  if (type !== "penalty" && type !== "payment" && type !== "waiver") {
-    return { error: "Type must be a fee, a payment or a leave waiver." };
-  }
-  if (!amount || Number.isNaN(amount) || amount <= 0) {
-    return { error: "Enter a positive amount." };
-  }
-
-  try {
-    await sql`
-      UPDATE ledger
-      SET type = ${type}, amount = ${amount}, reason = ${reason || null}
-      WHERE id = ${id}
-    `;
-  } catch (e) {
-    return {
-      error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save entry.",
-    };
-  }
-  revalidatePath("/admin");
-  return {};
-}
-
-/** Permanently delete a single fee/payment ledger entry. */
-export async function deleteLedgerEntry(id: number): Promise<{ error?: string }> {
-  await assertAdmin();
-  try {
-    await sql`DELETE FROM ledger WHERE id = ${id}`;
-  } catch (e) {
-    return {
-      error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete entry.",
-    };
-  }
-  revalidatePath("/admin");
-  return {};
-}
-
-// ---------------------------------------------------------------------------
-// Dashboard stats (aggregates for the charts)
-// ---------------------------------------------------------------------------
-export type DashboardStats = {
-  students: { total: number; active: number; inactive: number };
-  money: { outstanding: number; penalties: number; payments: number };
-  attendance: { title: string; scheduled_at: string; present: number; absent: number }[];
-  assignments: { title: string; done: number; total: number }[];
-  topDebtors: { name: string; balance: number }[];
-};
-
-/** A fully-zeroed stats object — what the dashboard falls back to on any error. */
-function emptyDashboardStats(): DashboardStats {
-  return {
-    students: { total: 0, active: 0, inactive: 0 },
-    money: { outstanding: 0, penalties: 0, payments: 0 },
-    attendance: [],
-    assignments: [],
-    topDebtors: [],
-  };
-}
-
-/**
- * Run a single dashboard query and never throw: on any error (e.g. a missing
- * table on a half-migrated database, or a transient connection drop) we log it
- * server-side and return `fallback` so one bad query can't take down the whole
- * dashboard render. This is what keeps the page from showing the opaque
- * "An error occurred in the Server Components render" message in production.
- */
-async function safeQuery<T>(label: string, run: () => Promise<T>, fallback: T): Promise<T> {
-  try {
-    return await run();
-  } catch (e) {
-    console.error(`[dashboard] ${label} query failed:`, e);
-    return fallback;
-  }
-}
-
-export async function getDashboardStats(): Promise<DashboardStats> {
-  await assertAdmin();
-
-  const studentRows = await safeQuery(
-    "students",
-    async () =>
-      (await sql`
-        SELECT
-          COUNT(*) AS total,
-          COUNT(*) FILTER (WHERE status = 'active') AS active
-        FROM students
-      `) as { total: string; active: string }[],
-    [] as { total: string; active: string }[]
-  );
-  const total = Number(studentRows[0]?.total ?? 0);
-  const active = Number(studentRows[0]?.active ?? 0);
-
-  const moneyRows = await safeQuery(
-    "money",
-    async () =>
-      (await sql`
-        SELECT
-          COALESCE(SUM(amount) FILTER (WHERE type = 'penalty'), 0) AS penalties,
-          COALESCE(SUM(amount) FILTER (WHERE type = 'payment'), 0) AS payments
-        FROM ledger
-      `) as { penalties: string; payments: string }[],
-    [] as { penalties: string; payments: string }[]
-  );
-
-  const outstandingRows = await safeQuery(
-    "outstanding",
-    async () =>
-      (await sql`
-        SELECT COALESCE(SUM(CASE WHEN bal > 0 THEN bal ELSE 0 END), 0) AS outstanding
-        FROM (
-          SELECT student_id,
-            SUM(CASE WHEN type = 'penalty' THEN amount WHEN type = 'payment' THEN -amount ELSE 0 END) AS bal
-          FROM ledger GROUP BY student_id
-        ) t
-      `) as { outstanding: string }[],
-    [] as { outstanding: string }[]
-  );
-
-  const attendanceRows = await safeQuery(
-    "attendance",
-    async () =>
-      (await sql`
-        SELECT s.title, s.scheduled_at,
-          COUNT(*) FILTER (WHERE a.status = 'present') AS present,
-          COUNT(*) FILTER (WHERE a.status = 'absent') AS absent
-        FROM sessions s
-        LEFT JOIN attendance a ON a.session_id = s.id
-        GROUP BY s.id, s.title, s.scheduled_at
-        ORDER BY s.scheduled_at DESC
-        LIMIT 10
-      `) as { title: string; scheduled_at: string; present: string; absent: string }[],
-    [] as { title: string; scheduled_at: string; present: string; absent: string }[]
-  );
-
-  const assignmentRows = await safeQuery(
-    "assignments",
-    async () =>
-      (await sql`
-        SELECT a.title,
-          COUNT(st.id) FILTER (WHERE st.status = 'done') AS done
-        FROM assignments a
-        LEFT JOIN assignment_status st ON st.assignment_id = a.id
-        GROUP BY a.id, a.title
-        ORDER BY COALESCE(a.due_at, a.created_at) DESC
-        LIMIT 15
-      `) as { title: string; done: string }[],
-    [] as { title: string; done: string }[]
-  );
-
-  const debtorRows = await safeQuery(
-    "debtors",
-    async () =>
-      (await sql`
-        SELECT s.name,
-          SUM(CASE WHEN l.type = 'penalty' THEN l.amount WHEN l.type = 'payment' THEN -l.amount ELSE 0 END) AS balance
-        FROM students s JOIN ledger l ON l.student_id = s.id
-        GROUP BY s.id, s.name
-        HAVING SUM(CASE WHEN l.type = 'penalty' THEN l.amount WHEN l.type = 'payment' THEN -l.amount ELSE 0 END) > 0
-        ORDER BY balance DESC
-        LIMIT 5
-      `) as { name: string; balance: string }[],
-    [] as { name: string; balance: string }[]
-  );
-
-  return {
-    students: { total, active, inactive: Math.max(0, total - active) },
-    money: {
-      outstanding: Number(outstandingRows[0]?.outstanding ?? 0),
-      penalties: Number(moneyRows[0]?.penalties ?? 0),
-      payments: Number(moneyRows[0]?.payments ?? 0),
-    },
-    // Reverse to chronological order for the trend chart.
-    attendance: attendanceRows
-      .map((r) => ({
-        title: r.title,
-        scheduled_at: r.scheduled_at,
-        present: Number(r.present),
-        absent: Number(r.absent),
-      }))
-      .reverse(),
-    assignments: assignmentRows.map((r) => ({
-      title: r.title,
-      done: Number(r.done),
-      total: active,
-    })),
-    topDebtors: debtorRows.map((r) => ({ name: r.name, balance: Number(r.balance) })),
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1255,7 +740,7 @@ export type QuestionRow = {
 
 export async function getQuestions(): Promise<QuestionRow[]> {
   await assertAdmin();
-  return (await sql`
+  const rows = (await sql`
     SELECT
       q.id, q.student_id,
       s.name  AS student_name,
@@ -1264,7 +749,8 @@ export async function getQuestions(): Promise<QuestionRow[]> {
     FROM questions q
     JOIN students s ON s.id = q.student_id
     ORDER BY (q.status = 'open') DESC, q.created_at DESC
-  `) as QuestionRow[];
+  `) as (Omit<QuestionRow, "created_at" | "answered_at"> & { created_at: Date; answered_at: Date | null })[];
+  return rows.map((r) => ({ ...r, created_at: iso(r.created_at), answered_at: isoOrNull(r.answered_at) }));
 }
 
 export async function answerQuestion(
@@ -1291,9 +777,7 @@ export async function answerQuestion(
       }).catch(() => {});
     }
   } catch (e) {
-    return {
-      error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save reply.",
-    };
+    return { error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save reply." };
   }
   revalidatePath("/admin");
   return {};
@@ -1305,14 +789,12 @@ export async function setQuestionStatus(
 ): Promise<void> {
   await assertAdmin();
   if (status === "resolved") {
-    // Keep an existing answered_at, otherwise stamp it now.
     await sql`
       UPDATE questions
       SET status = 'resolved', answered_at = COALESCE(answered_at, now())
       WHERE id = ${id}
     `;
   } else {
-    // Reopening drops the answered timestamp.
     await sql`UPDATE questions SET status = 'open', answered_at = NULL WHERE id = ${id}`;
   }
   revalidatePath("/admin");
@@ -1323,16 +805,14 @@ export async function deleteQuestion(id: number): Promise<{ error?: string }> {
   try {
     await sql`DELETE FROM questions WHERE id = ${id}`;
   } catch (e) {
-    return {
-      error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete question.",
-    };
+    return { error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete question." };
   }
   revalidatePath("/admin");
   return {};
 }
 
 // ---------------------------------------------------------------------------
-// Leave requests (students appeal for an absence, tutor approves / rejects)
+// Leave requests (students ask for leave from a class; approved = excused)
 // ---------------------------------------------------------------------------
 export type LeaveRow = {
   id: number;
@@ -1350,7 +830,7 @@ export type LeaveRow = {
 
 export async function getLeaveRequests(): Promise<LeaveRow[]> {
   await assertAdmin();
-  return (await sql`
+  const rows = (await sql`
     SELECT
       l.id, l.student_id,
       s.name  AS student_name,
@@ -1360,12 +840,23 @@ export async function getLeaveRequests(): Promise<LeaveRow[]> {
     FROM leave_requests l
     JOIN students s ON s.id = l.student_id
     ORDER BY (l.status = 'pending') DESC, l.created_at DESC
-  `) as LeaveRow[];
+  `) as (Omit<LeaveRow, "lesson_at" | "created_at" | "reviewed_at"> & {
+    lesson_at: Date | null;
+    created_at: Date;
+    reviewed_at: Date | null;
+  })[];
+  return rows.map((r) => ({
+    ...r,
+    lesson_at: isoOrNull(r.lesson_at),
+    created_at: iso(r.created_at),
+    reviewed_at: isoOrNull(r.reviewed_at),
+  }));
 }
 
 /**
- * Approve / reject a leave request (or just save feedback while keeping it
- * pending). Stamps reviewed_at only on a real decision and notifies the student.
+ * Approve / reject a leave request (or keep it pending with feedback). An
+ * approved leave marks the student "excused" for that class so it does not
+ * count against their attendance; undoing the approval removes the excuse.
  */
 export async function reviewLeaveRequest(
   id: number,
@@ -1386,10 +877,34 @@ export async function reviewLeaveRequest(
           feedback = ${feedback || null},
           reviewed_at = CASE WHEN ${status} = 'pending' THEN NULL ELSE now() END
       WHERE id = ${id}
-      RETURNING student_id, lesson_title
-    `) as { student_id: number; lesson_title: string | null }[];
+      RETURNING student_id, session_id, lesson_title
+    `) as { student_id: number; session_id: number | null; lesson_title: string | null }[];
 
     const l = rows[0];
+    if (l?.session_id) {
+      if (status === "approved") {
+        await sql`
+          INSERT INTO attendance (student_id, session_id, status)
+          VALUES (${l.student_id}, ${l.session_id}, 'excused')
+          ON CONFLICT (student_id, session_id)
+          DO UPDATE SET status = 'excused' WHERE attendance.status <> 'present'
+        `;
+      } else {
+        // Undo an earlier excuse: back to absent if the class already happened.
+        await sql`
+          UPDATE attendance a SET status = 'absent'
+          FROM sessions s
+          WHERE a.session_id = s.id AND s.id = ${l.session_id}
+            AND a.student_id = ${l.student_id} AND a.status = 'excused'
+            AND s.closed_at IS NOT NULL
+        `;
+        await sql`
+          DELETE FROM attendance
+          WHERE session_id = ${l.session_id} AND student_id = ${l.student_id} AND status = 'excused'
+        `;
+      }
+    }
+
     if (l?.student_id && status !== "pending") {
       const lesson = l.lesson_title ? ` for ${l.lesson_title}` : "";
       notifyStudent(l.student_id, {
@@ -1401,9 +916,7 @@ export async function reviewLeaveRequest(
       }).catch(() => {});
     }
   } catch (e) {
-    return {
-      error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save review.",
-    };
+    return { error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save review." };
   }
   revalidatePath("/admin");
   return {};
@@ -1415,8 +928,7 @@ export async function deleteLeaveRequest(id: number): Promise<{ error?: string }
     await sql`DELETE FROM leave_requests WHERE id = ${id}`;
   } catch (e) {
     return {
-      error:
-        e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete leave request.",
+      error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete leave request.",
     };
   }
   revalidatePath("/admin");

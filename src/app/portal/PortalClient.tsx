@@ -22,9 +22,7 @@ import { studentLogout } from "@/actions/studentAuth";
 import { saveStudentSubscription } from "@/actions/push";
 import { usePushSubscription } from "@/lib/usePushSubscription";
 import {
-  PAYMENT_EASYPAISA_NUMBER,
-  PAYMENT_ACCOUNT_NAME,
-  TUTOR_WHATSAPP_NUMBER,
+  COURSE_NAME,
   PORTAL_DEMO_YOUTUBE_ID,
   ASSIGNMENT_GUIDE_YOUTUBE_ID,
   TUTOR_NAME,
@@ -34,27 +32,47 @@ import {
   TUTOR_PHOTO,
   TUTOR_BIO,
 } from "@/lib/constants";
+import {
+  Card,
+  CourseTab,
+  FeeBlockedCard,
+  FeesTab,
+  HomeworkTab,
+  NotEnrolledCard,
+  ProgressTab,
+  VideosTab,
+  WeekChecklist,
+} from "./sections";
 
 type Tab =
   | "class"
   | "course"
-  | "topics"
-  | "library"
-  | "assignments"
+  | "videos"
+  | "homework"
+  | "progress"
+  | "fees"
   | "quiz"
   | "leave"
-  | "record"
   | "ask";
 
 function fmt(d: string | null): string {
   if (!d) return "";
   const date = new Date(d);
-  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString();
+  return Number.isNaN(date.getTime())
+    ? ""
+    : date.toLocaleString("en-PK", {
+        timeZone: "Asia/Karachi",
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        hour: "numeric",
+        minute: "2-digit",
+      });
 }
 function fmtDate(d: string | null): string {
   if (!d) return "";
   const date = new Date(d);
-  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString();
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString("en-GB", { timeZone: "Asia/Karachi" });
 }
 
 export default function PortalClient({ data }: { data: PortalData }) {
@@ -63,24 +81,40 @@ export default function PortalClient({ data }: { data: PortalData }) {
   const saveSub = useCallback(saveStudentSubscription, []);
   usePushSubscription(saveSub);
 
+  const hwDue = data.weekends.filter(
+    (w) => w.is_open && w.homework && (!w.submission || w.submission.status === "needs_changes")
+  ).length;
+  const feeAlert = data.fees.invoices.some((i) => i.status === "overdue");
+
+  const tabs: [Tab, string, string, boolean][] = [
+    ["class", "Class", "🏫", false],
+    ["course", "Course", "🎓", false],
+    ["videos", "Videos", "🎬", false],
+    ["homework", "Homework", "📝", hwDue > 0],
+    ["progress", "Progress", "📈", false],
+    ["fees", "Fees", "💳", feeAlert],
+    ["quiz", "Quiz", "🧠", false],
+    ["leave", "Leave", "🌴", false],
+    ["ask", "Ask", "💬", false],
+  ];
+
   return (
     <main className="min-h-screen max-w-md mx-auto p-4 pb-24">
       <header className="flex items-center justify-between mb-4">
-        <div>
-          <p className="text-slate-500 text-sm">Welcome</p>
-          <h1 className="text-xl font-bold">{data.name}</h1>
+        <div className="min-w-0">
+          <p className="text-slate-500 text-xs truncate">
+            {data.enrollment ? data.enrollment.batchName : COURSE_NAME}
+          </p>
+          <h1 className="text-xl font-bold truncate">{data.name}</h1>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           <button
             onClick={() => setShowBio(true)}
             className="flex items-center gap-1.5 rounded-full bg-brand-50 text-brand-700 text-sm font-semibold px-3 py-1.5 active:scale-[0.97] transition"
           >
-            👤 About Teacher
+            👤 Teacher
           </button>
-          <button
-            onClick={() => studentLogout()}
-            className="text-sm text-slate-500 underline"
-          >
+          <button onClick={() => studentLogout()} className="text-sm text-slate-500 underline">
             Log out
           </button>
         </div>
@@ -91,55 +125,40 @@ export default function PortalClient({ data }: { data: PortalData }) {
       {tab === "class" && (
         <>
           <ClassTab data={data} />
-          <FeePurposeNote />
+          {data.enrollment && <WeekChecklist data={data} onOpen={setTab} />}
           <HowToVideoCard />
           <AssignmentGuideCard />
         </>
       )}
       {tab === "course" && <CourseTab data={data} />}
-      {tab === "topics" && <TopicsTab data={data} />}
-      {tab === "library" && <LibraryTab data={data} />}
-      {tab === "assignments" && <AssignmentsTab data={data} />}
+      {tab === "videos" && <VideosTab data={data} />}
+      {tab === "homework" && <HomeworkTab data={data} />}
+      {tab === "progress" && <ProgressTab data={data} />}
+      {tab === "fees" && <FeesTab data={data} />}
       {tab === "quiz" && <QuizTab data={data} />}
       {tab === "leave" && <LeaveTab data={data} />}
-      {tab === "record" && <RecordTab data={data} />}
       {tab === "ask" && <AskTab data={data} />}
 
-      {/* Bottom tab bar (mobile-first). With 9 tabs a fixed grid no longer fits,
-          so the bar scrolls horizontally; each item is a fixed width. */}
-      <nav className="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-white border-t border-slate-200 flex overflow-x-auto no-scrollbar">
-        {([
-          ["class", "Class", "🏫"],
-          ["course", "Course", "🎓"],
-          ["topics", "Topics", "📚"],
-          ["library", "Library", "🎬"],
-          ["assignments", "Tasks", "📝"],
-          ["quiz", "Quiz", "🧠"],
-          ["leave", "Leave", "🌴"],
-          ["record", "Record", "📊"],
-          ["ask", "Ask", "💬"],
-        ] as [Tab, string, string][]).map(([t, label, icon]) => (
+      {/* Bottom tab bar (mobile-first). 9 tabs scroll horizontally. */}
+      <nav
+        className="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-white border-t border-slate-200 flex overflow-x-auto no-scrollbar"
+        style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+      >
+        {tabs.map(([t, label, icon, dot]) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`shrink-0 w-[52px] py-2.5 flex flex-col items-center gap-0.5 text-[11px] font-medium ${
+            className={`relative shrink-0 w-[60px] py-2.5 flex flex-col items-center gap-0.5 text-[11px] font-medium ${
               tab === t ? "text-brand-700" : "text-slate-400"
             }`}
           >
             <span className="text-lg leading-none">{icon}</span>
             {label}
+            {dot && <span className="absolute top-1.5 right-3 h-2 w-2 rounded-full bg-rose-500" />}
           </button>
         ))}
       </nav>
     </main>
-  );
-}
-
-function Card({ children }: { children: React.ReactNode }) {
-  return (
-    <section className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-100 p-5 mb-4">
-      {children}
-    </section>
   );
 }
 
@@ -238,38 +257,6 @@ function TutorBioCard() {
 }
 
 // ---------------------------------------------------------------------------
-// Why there is a late/absent fee (shown to every student on the Class tab)
-// ---------------------------------------------------------------------------
-function FeePurposeNote() {
-  return (
-    <section className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-5 mb-4">
-      <h2 className="font-bold text-emerald-800 mb-2">
-        💚 This course is 100% free — about the fee
-      </h2>
-      <div className="text-sm text-emerald-900/80 space-y-2 leading-relaxed">
-        <p>
-          You never pay anything to learn here. The small fee for{" "}
-          <span className="font-semibold">missing or being late</span> to a class is{" "}
-          <span className="font-semibold">not a charge for the course</span> — it only
-          exists to help all of us stay punctual and committed.
-        </p>
-        <p>
-          <span className="font-semibold">I don&apos;t keep a single rupee of it.</span> Every
-          amount collected goes into buying{" "}
-          <span className="font-semibold">premium (paid) AI tools and subscriptions</span> for
-          the whole class — the kind that are expensive to buy on your own. This way we all get
-          to use professional tools together.
-        </p>
-        <p className="text-emerald-700">
-          So if you&apos;re ever charged, that money comes straight back to you and your
-          classmates as better tools. 🙌 Just be on time and you&apos;ll never pay a thing.
-        </p>
-      </div>
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // "How to use this portal" demo video (shown in the Class tab)
 // ---------------------------------------------------------------------------
 function HowToVideoCard() {
@@ -303,17 +290,17 @@ function AssignmentGuideCard() {
   return (
     <Card>
       <h2 className="font-bold mb-1">
-        📤 How to Submit an Assignment in ClassGate LMS
+        📤 How to submit your homework
       </h2>
       <p className="text-slate-500 text-sm mb-3">
-        Step-by-step student guide. Tap play to watch.
+        Step-by-step guide. Tap play to watch.
       </p>
       <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-slate-900">
         {playing ? (
           <iframe
             className="absolute inset-0 h-full w-full"
             src={`https://www.youtube.com/embed/${ASSIGNMENT_GUIDE_YOUTUBE_ID}?rel=0&autoplay=1`}
-            title="How to Submit an Assignment in ClassGate LMS"
+            title="How to submit your homework"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
             allowFullScreen
           />
@@ -405,85 +392,6 @@ function NextClassCard({ next }: { next: NextClass }) {
 }
 
 // ---------------------------------------------------------------------------
-// Blocked (owes a missed-class fee) — show how to pay & get unblocked
-// ---------------------------------------------------------------------------
-function BlockedCard({ balance }: { balance: number }) {
-  const [copied, setCopied] = useState(false);
-
-  async function copyNumber() {
-    try {
-      await navigator.clipboard.writeText(PAYMENT_EASYPAISA_NUMBER);
-    } catch {
-      window.prompt("EasyPaisa number:", PAYMENT_EASYPAISA_NUMBER);
-    }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }
-
-  const waText = encodeURIComponent(
-    `Hi! I've paid Rs ${balance} for my missed class. Here is my payment screenshot.`
-  );
-  const waLink = `https://wa.me/${TUTOR_WHATSAPP_NUMBER}?text=${waText}`;
-
-  return (
-    <Card>
-      <div className="text-center mb-4">
-        <div className="text-5xl mb-3">⛔️</div>
-        <p className="text-lg font-semibold text-rose-600 mb-1">You owe Rs {balance}</p>
-        <p className="text-slate-600 text-sm">
-          You missed a class. Clear your dues to check in again.
-        </p>
-      </div>
-
-      <div className="rounded-xl border border-slate-200 divide-y">
-        {/* Step 1 — pay */}
-        <div className="p-3">
-          <p className="text-sm font-semibold mb-2">
-            1. Send Rs {balance} via EasyPaisa
-          </p>
-          <div className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2">
-            <div className="min-w-0">
-              <p className="font-mono font-bold tracking-wide">{PAYMENT_EASYPAISA_NUMBER}</p>
-              {PAYMENT_ACCOUNT_NAME && (
-                <p className="text-slate-500 text-xs truncate">{PAYMENT_ACCOUNT_NAME}</p>
-              )}
-            </div>
-            <button
-              onClick={copyNumber}
-              className="shrink-0 text-xs rounded-lg border border-slate-300 px-2 py-1"
-            >
-              {copied ? "Copied!" : "Copy"}
-            </button>
-          </div>
-        </div>
-
-        {/* Step 2 — send screenshot */}
-        <div className="p-3">
-          <p className="text-sm font-semibold mb-2">2. Send the payment screenshot</p>
-          <a
-            href={waLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block w-full text-center rounded-xl bg-green-600 px-4 py-2.5 text-white font-semibold active:scale-[0.98] transition"
-          >
-            Send screenshot on WhatsApp
-          </a>
-        </div>
-
-        {/* Step 3 — wait */}
-        <div className="p-3">
-          <p className="text-sm font-semibold mb-1">3. Wait to be unblocked</p>
-          <p className="text-slate-500 text-xs">
-            Once your tutor confirms the payment, this screen clears and you can check in
-            again. Refresh after a few minutes.
-          </p>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Class / check-in
 // ---------------------------------------------------------------------------
 function ClassTab({ data }: { data: PortalData }) {
@@ -522,8 +430,12 @@ function ClassTab({ data }: { data: PortalData }) {
     }
   }
 
+  if (c.kind === "no-enrollment") {
+    return <NotEnrolledCard />;
+  }
+
   if (c.kind === "blocked") {
-    return <BlockedCard balance={c.balance} />;
+    return <FeeBlockedCard data={data} monthNo={c.monthNo} remaining={c.remaining} dueDate={c.dueDate} />;
   }
 
   if (c.kind === "no-session") {
@@ -600,375 +512,6 @@ function ClassTab({ data }: { data: PortalData }) {
         </button>
       </form>
     </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Course roadmap — what you'll learn (Part A / Part B) + outcomes
-// ---------------------------------------------------------------------------
-function CourseTab({ data }: { data: PortalData }) {
-  const { curriculum, outcomes } = data;
-
-  if (curriculum.length === 0 && outcomes.length === 0) {
-    return (
-      <Card>
-        <div className="text-center py-6">
-          <div className="text-4xl mb-2">🎓</div>
-          <h2 className="text-lg font-bold mb-1">Course roadmap</h2>
-          <p className="text-slate-500 text-sm">
-            Your course roadmap will appear here soon.
-          </p>
-        </div>
-      </Card>
-    );
-  }
-
-  return (
-    <>
-      <Card>
-        <h2 className="font-bold mb-1">🎓 What you&apos;ll learn</h2>
-        <p className="text-slate-500 text-sm">
-          Here&apos;s the whole journey. Each week has{" "}
-          <span className="font-semibold text-brand-700">Part A</span> (for everyone — no laptop
-          needed) and <span className="font-semibold text-emerald-700">Part B</span> (bring your
-          laptop for hands-on building).
-        </p>
-      </Card>
-
-      {curriculum.map((w) => (
-        <Card key={w.id}>
-          <h3 className="font-bold mb-3">{w.title}</h3>
-          {w.part_a && (
-            <div className="rounded-xl border border-brand-100 bg-brand-50/60 p-3 mb-2">
-              <p className="text-xs font-bold uppercase tracking-wide text-brand-700 mb-1">
-                Part A · Everyone
-              </p>
-              <p className="text-sm text-slate-700 whitespace-pre-line">{w.part_a}</p>
-            </div>
-          )}
-          {w.part_b && (
-            <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
-              <p className="text-xs font-bold uppercase tracking-wide text-emerald-700 mb-1">
-                Part B · Bring your laptop
-              </p>
-              <p className="text-sm text-slate-700 whitespace-pre-line">{w.part_b}</p>
-            </div>
-          )}
-        </Card>
-      ))}
-
-      {outcomes.length > 0 && (
-        <section className="rounded-2xl border border-amber-200 bg-amber-50/70 p-5 mb-4">
-          <h2 className="font-bold text-amber-900 mb-3">
-            🚀 After this course, you&apos;ll be able to…
-          </h2>
-          <ul className="space-y-2">
-            {outcomes.map((o) => (
-              <li key={o.id} className="flex items-start gap-2 text-sm text-amber-900/90">
-                <span className="shrink-0 mt-0.5">✅</span>
-                <span>{o.body}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Topics
-// ---------------------------------------------------------------------------
-function TopicsTab({ data }: { data: PortalData }) {
-  const { upcoming, past } = data.topics;
-  return (
-    <>
-      <Card>
-        <h2 className="font-bold mb-3">📌 Coming up</h2>
-        {upcoming.length === 0 ? (
-          <p className="text-slate-400 text-sm">Nothing scheduled yet.</p>
-        ) : (
-          <ul className="space-y-3">
-            {upcoming.map((t) => (
-              <li key={t.id} className="border-l-4 border-brand-300 pl-3">
-                <p className="font-semibold">{t.title}</p>
-                {t.description && (
-                  <p className="text-slate-600 text-sm">{t.description}</p>
-                )}
-                {t.planned_at && (
-                  <p className="text-slate-400 text-xs mt-0.5">{fmtDate(t.planned_at)}</p>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-      <Card>
-        <h2 className="font-bold mb-3">✅ Already covered</h2>
-        {past.length === 0 ? (
-          <p className="text-slate-400 text-sm">Nothing yet.</p>
-        ) : (
-          <ul className="space-y-3">
-            {past.map((t) => (
-              <li key={t.id} className="border-l-4 border-emerald-300 pl-3">
-                <p className="font-semibold">{t.title}</p>
-                {t.description && (
-                  <p className="text-slate-600 text-sm">{t.description}</p>
-                )}
-                {t.planned_at && (
-                  <p className="text-slate-400 text-xs mt-0.5">{fmtDate(t.planned_at)}</p>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Library — recorded lectures + slides / materials (read-only for students)
-// ---------------------------------------------------------------------------
-function LibraryTab({ data }: { data: PortalData }) {
-  const { resources } = data;
-
-  if (resources.length === 0) {
-    return (
-      <Card>
-        <div className="text-center py-6">
-          <div className="text-4xl mb-2">🎬</div>
-          <h2 className="text-lg font-bold mb-1">Library</h2>
-          <p className="text-slate-500 text-sm">
-            Recorded lectures and slides will appear here. Check back after class.
-          </p>
-        </div>
-      </Card>
-    );
-  }
-
-  return (
-    <>
-      <Card>
-        <h2 className="font-bold mb-1">🎬 Library</h2>
-        <p className="text-slate-500 text-sm">
-          Missed a class or want to revise? Watch the recording and open the slides for each
-          lesson here.
-        </p>
-      </Card>
-
-      {resources.map((r) => {
-        return (
-          <Card key={r.id}>
-            <h3 className="font-bold mb-1">{r.title}</h3>
-            {r.description && (
-              <p className="text-slate-600 text-sm mb-3 whitespace-pre-line">{r.description}</p>
-            )}
-            <div className="grid grid-cols-1 gap-2">
-              {r.videos.map((v, i) => (
-                <a
-                  key={`v-${i}`}
-                  href={v.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-white font-semibold active:scale-[0.98] transition"
-                >
-                  ▶️{" "}
-                  {v.label ||
-                    (r.videos.length > 1 ? `Watch recording ${i + 1}` : "Watch recording")}
-                </a>
-              ))}
-              {r.slides.map((s, i) => (
-                <a
-                  key={`s-${i}`}
-                  href={s.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-3 text-white font-semibold active:scale-[0.98] transition"
-                >
-                  📄{" "}
-                  {s.label ||
-                    (r.slides.length > 1
-                      ? `View slides / materials ${i + 1}`
-                      : "View slides / materials")}
-                </a>
-              ))}
-            </div>
-          </Card>
-        );
-      })}
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Assignments (numbered, date-ordered, tap a task to see details)
-// ---------------------------------------------------------------------------
-function AssignmentsTab({ data }: { data: PortalData }) {
-  const total = data.assignments.length;
-  const doneCount = data.assignments.filter((a) => a.status === "done").length;
-
-  return (
-    <Card>
-      <div className="flex items-center justify-between mb-1">
-        <h2 className="font-bold">📝 Tasks</h2>
-        {total > 0 && (
-          <span className="text-xs rounded-full bg-slate-100 text-slate-600 px-2.5 py-1 font-semibold">
-            {doneCount}/{total} done
-          </span>
-        )}
-      </div>
-      <p className="text-slate-500 text-sm mb-3">
-        Tap a task to see its details. Send your work to your tutor on WhatsApp — they&apos;ll
-        mark it done here.
-      </p>
-      {total === 0 ? (
-        <p className="text-slate-400 text-sm">No tasks yet.</p>
-      ) : (
-        <ul className="space-y-2">
-          {data.assignments.map((a, i) => (
-            <TaskItem key={a.id} task={a} number={i + 1} />
-          ))}
-        </ul>
-      )}
-    </Card>
-  );
-}
-
-function TaskItem({
-  task,
-  number,
-}: {
-  task: PortalData["assignments"][number];
-  number: number;
-}) {
-  const [open, setOpen] = useState(false);
-  const done = task.status === "done";
-
-  return (
-    <li className="rounded-xl border border-slate-200 overflow-hidden">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="w-full flex items-center gap-3 p-3 text-left"
-      >
-        <span
-          className={`shrink-0 grid place-items-center h-7 w-7 rounded-full text-xs font-bold ${
-            done ? "bg-emerald-100 text-emerald-700" : "bg-brand-50 text-brand-700"
-          }`}
-        >
-          {number}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block font-semibold truncate">{task.title}</span>
-          {task.due_at && (
-            <span className="block text-slate-400 text-xs">Due {fmtDate(task.due_at)}</span>
-          )}
-        </span>
-        <span
-          className={`shrink-0 text-xs rounded-full px-2 py-0.5 font-medium ${
-            done ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
-          }`}
-        >
-          {done ? "done ✅" : "pending"}
-        </span>
-        <span className={`shrink-0 text-slate-400 transition-transform ${open ? "rotate-90" : ""}`}>
-          ▶
-        </span>
-      </button>
-
-      {open && (
-        <div className="px-3 pb-3 pt-0 border-t border-slate-100 bg-slate-50/60">
-          {task.description ? (
-            <p className="text-slate-700 text-sm whitespace-pre-line mt-3">{task.description}</p>
-          ) : (
-            <p className="text-slate-400 text-sm mt-3">No extra details for this task.</p>
-          )}
-          {task.due_at && (
-            <p className="text-slate-500 text-xs mt-2">📅 Due {fmt(task.due_at)}</p>
-          )}
-        </div>
-      )}
-    </li>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// My record (attendance + dues)
-// ---------------------------------------------------------------------------
-function RecordTab({ data }: { data: PortalData }) {
-  return (
-    <>
-      <Card>
-        <div className="flex items-center justify-between">
-          <h2 className="font-bold">Balance</h2>
-          <span
-            className={
-              data.balance > 0 ? "text-rose-600 font-bold" : "text-emerald-600 font-bold"
-            }
-          >
-            {data.balance > 0 ? `Rs ${data.balance} due` : "All clear"}
-          </span>
-        </div>
-      </Card>
-
-      <Card>
-        <h2 className="font-bold mb-3">Attendance history</h2>
-        {data.attendance.length === 0 ? (
-          <p className="text-slate-400 text-sm">No classes yet.</p>
-        ) : (
-          <ul className="divide-y text-sm">
-            {data.attendance.map((a, i) => (
-              <li key={i} className="flex items-center justify-between py-2">
-                <div>
-                  <p className="font-medium">{a.title}</p>
-                  <p className="text-slate-400 text-xs">{fmt(a.scheduled_at)}</p>
-                </div>
-                <span
-                  className={
-                    a.status === "present"
-                      ? "text-emerald-600 font-medium"
-                      : "text-rose-600 font-medium"
-                  }
-                >
-                  {a.status}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-
-      <Card>
-        <h2 className="font-bold mb-3">Absent fee</h2>
-        {data.ledger.length === 0 ? (
-          <p className="text-slate-400 text-sm">No charges or payments yet.</p>
-        ) : (
-          <ul className="divide-y text-sm">
-            {data.ledger.map((l, i) => (
-              <li key={i} className="flex items-center justify-between py-2">
-                <div>
-                  <p className="font-medium capitalize">{l.reason || l.type}</p>
-                  <p className="text-slate-400 text-xs">{fmt(l.created_at)}</p>
-                </div>
-                <span
-                  className={
-                    l.type === "penalty"
-                      ? "text-rose-600"
-                      : l.type === "waiver"
-                        ? "text-amber-600"
-                        : "text-emerald-600"
-                  }
-                >
-                  {l.type === "penalty" ? "+" : l.type === "waiver" ? "" : "−"}Rs {l.amount}
-                  {l.type === "waiver" ? " waived" : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-    </>
   );
 }
 

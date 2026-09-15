@@ -36,3 +36,7 @@ next-env.d.ts
 /public/worker-*.js
 /public/sw.js.map
 /public/workbox-*.js.map
+
+# database backups (student data)
+/backups/
+/.playwright-mcp/

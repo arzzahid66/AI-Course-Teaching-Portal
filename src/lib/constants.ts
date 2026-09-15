@@ -49,12 +49,6 @@ export function serializeResourceLinks(links: ResourceLink[]): string {
   return links.map((l) => (l.label ? `${l.label} | ${l.url}` : l.url)).join("\n");
 }
 
-/** Penalty (in Rs) charged to a student who misses a class. */
-export const MISSED_CLASS_PENALTY = 200;
-
-/** Reason text stored on the penalty ledger row. */
-export const MISSED_CLASS_REASON = "Missed class";
-
 /**
  * Check-in stays open this many minutes AFTER the tutor opens the session
  * (i.e. measured from the session's created_at / class start), not from the
@@ -81,22 +75,28 @@ export const QUIZ_DEFAULT_MAX_ATTEMPTS = 2;
 export const QUIZ_REATTEMPT_GRANT = 2;
 
 // ---------------------------------------------------------------------------
-// Payment details shown to a blocked student (so they can clear their dues).
-// Change these to your own numbers.
+// Course defaults. Each intake stores its own values; these pre-fill the
+// "Create intake" form. Payment accounts + the WhatsApp number live in the DB
+// (admin → Fees → Payment accounts).
 // ---------------------------------------------------------------------------
 
-/** EasyPaisa account number students send their missed-class fee to. */
-export const PAYMENT_EASYPAISA_NUMBER = "03487356993";
+/** Course name shown across the app. */
+export const COURSE_NAME = "AI Engineering Course";
 
-/** Account holder name shown next to the EasyPaisa number (optional). */
-export const PAYMENT_ACCOUNT_NAME = "Abdul Rehman zahid";
+/** Default monthly fee (Rs) for a new intake. */
+export const DEFAULT_MONTHLY_FEE = 2000;
 
-/**
- * Tutor WhatsApp number for payment screenshots, in international format
- * (country code, digits only — no '+' or spaces) for wa.me links.
- * e.g. Pakistan 0348... -> 92348...
- */
-export const TUTOR_WHATSAPP_NUMBER = "923487356003";
+/** Default number of paid months per intake (one level = 2 months). */
+export const DEFAULT_MONTHS = 2;
+
+/** Default weekends (weekly classes) per intake. */
+export const DEFAULT_WEEKENDS = 8;
+
+/** Default days after a due date before an unpaid month blocks check-in. */
+export const DEFAULT_GRACE_DAYS = 7;
+
+/** Default class time (Pakistan time) for auto-scheduled classes. */
+export const DEFAULT_CLASS_TIME = "10:00";
 
 /**
  * YouTube video ID for the "How to use this portal" demo shown to every student

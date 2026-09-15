@@ -4,12 +4,13 @@ import InstallButton from "./InstallButton";
 export default function HomePage() {
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-6 text-center">
-      <div className="text-5xl mb-4">🚪</div>
-      <h1 className="text-3xl font-bold mb-2">ClassGate</h1>
+      <div className="text-5xl mb-4">🎓</div>
+      <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600 mb-1">ClassGate</p>
+      <h1 className="text-3xl font-bold mb-2">AI Engineering Course</h1>
       <p className="text-slate-600 max-w-sm mb-8">
-        The gate in front of your live class. Students log in to their portal to
-        check in, see topics, assignments, and their record. Tutors manage
-        everything from the admin dashboard.
+        Live class every Sunday at 10:00 AM, two recorded videos every week, and
+        homework that builds real projects. Log in to check in, watch this
+        week&apos;s videos, submit homework, and see your progress and fees.
       </p>
 
       <div className="flex flex-col gap-3 w-full max-w-xs">
