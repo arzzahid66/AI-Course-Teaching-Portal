@@ -98,22 +98,6 @@ export const DEFAULT_GRACE_DAYS = 7;
 /** Default class time (Pakistan time) for auto-scheduled classes. */
 export const DEFAULT_CLASS_TIME = "10:00";
 
-/**
- * YouTube video ID for the "How to use this portal" demo shown to every student
- * in the Class tab. To change the video, copy the id after `watch?v=` in the
- * YouTube URL (e.g. https://www.youtube.com/watch?v=ZCAB_ysVb98 -> ZCAB_ysVb98).
- * Set to "" to hide the demo card entirely.
- */
-export const PORTAL_DEMO_YOUTUBE_ID = "NTJbSGlWEkM";
-
-/**
- * YouTube video ID for the "How to Submit an Assignment" guide shown to every
- * student in the Class tab. Unlike the demo above, this card stays collapsed —
- * it shows the title and a play button, and only loads the video once the
- * student clicks play. Set to "" to hide the card entirely.
- */
-export const ASSIGNMENT_GUIDE_YOUTUBE_ID = "ed7z10Ozkac";
-
 // ---------------------------------------------------------------------------
 // Tutor profile — shown to every student in an "About your teacher" card on the
 // Class tab. Edit these freely.

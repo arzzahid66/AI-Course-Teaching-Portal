@@ -95,3 +95,4 @@ This file is the plan and progress tracker for the revamp. Update it as tasks ar
 - Fix the EasyPaisa / WhatsApp numbers in Admin → Fees → Payment accounts if one is wrong (seeded: 03487356993 / 923487356003).
 - Create the intake "Batch 1 — Sep 2026" starting 2026-09-20, add Weekend 1 videos, add students, set each class's Meet link + code.
 - Run `migration.sql`-based reset only on purpose — it deletes everything.
+- 2026-09-16: removed the old "How to use this portal" and "How to submit homework" YouTube cards from the student Class tab (and their PORTAL_DEMO_YOUTUBE_ID / ASSIGNMENT_GUIDE_YOUTUBE_ID constants) — old-course videos.
