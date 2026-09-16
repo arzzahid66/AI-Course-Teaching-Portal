@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   deletePayment,
   deletePaymentAccount,
+  deletePaymentRow,
   recordPayment,
   savePaymentAccount,
   saveTutorWhatsapp,
@@ -11,6 +12,7 @@ import {
   updateInvoice,
   type FeeBoard,
   type FeeBoardRow,
+  type FeePaymentRow,
 } from "@/actions/fees";
 import type { InvoiceView, PaymentAccount } from "@/lib/course";
 import type { BatchRow } from "@/lib/course";
@@ -44,6 +46,7 @@ export default function FeesTab({
   const reminders = useAction();
   const [paying, setPaying] = useState<FeeBoardRow | null>(null);
   const [editingInvoice, setEditingInvoice] = useState<{ row: FeeBoardRow; invoice: InvoiceView } | null>(null);
+  const [viewingReceipts, setViewingReceipts] = useState<FeeBoardRow | null>(null);
   const [query, setQuery] = useState("");
 
   const months = Array.from({ length: Math.max(batch.months, ...board.rows.map((r) => r.invoices.length)) }, (_, i) => i + 1);
@@ -159,7 +162,7 @@ export default function FeesTab({
                           >
                             <FeeBadge status={i.status} />
                             <span className="block text-[11px] text-slate-400 tabular-nums">
-                              {i.remaining > 0 ? `${rs(i.remaining)} left` : fmtDay(i.due_date).slice(4, 10)}
+                              {i.remaining > 0 ? `${rs(i.remaining)} left` : `${rs(i.paid)} · undo`}
                             </span>
                           </button>
                         ) : (
@@ -172,13 +175,18 @@ export default function FeesTab({
                     {r.remaining ? rs(r.remaining) : "—"}
                   </td>
                   <td className="py-2 px-2 text-right">
-                    <button
-                      onClick={() => setPaying(r)}
-                      disabled={r.remaining === 0}
-                      className="text-xs rounded-lg bg-emerald-600 text-white px-2 py-1 disabled:opacity-30"
-                    >
-                      Record payment
-                    </button>
+                    {r.remaining > 0 ? (
+                      <button
+                        onClick={() => setPaying(r)}
+                        className="text-xs rounded-lg bg-emerald-600 text-white px-2 py-1"
+                      >
+                        Record payment
+                      </button>
+                    ) : (
+                      <button onClick={() => setViewingReceipts(r)} className={btn.small}>
+                        Receipts
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -186,7 +194,9 @@ export default function FeesTab({
             </tbody>
           </table>
         </div>
-        <p className="text-xs text-slate-400 mt-2">Tap a month to change its due date, amount or discount.</p>
+        <p className="text-xs text-slate-400 mt-2">
+          Tap a month to change its due date, amount or discount — or to undo a payment recorded by mistake.
+        </p>
       </Card>
 
       <Card>
@@ -211,7 +221,15 @@ export default function FeesTab({
         <InvoiceModal
           name={editingInvoice.row.name}
           invoice={editingInvoice.invoice}
+          payments={board.paymentRows.filter((p) => p.invoice_id === editingInvoice.invoice.id)}
           onClose={() => setEditingInvoice(null)}
+        />
+      )}
+      {viewingReceipts && (
+        <ReceiptsModal
+          row={viewingReceipts}
+          payments={board.paymentRows.filter((p) => p.enrollment_id === viewingReceipts.enrollment_id)}
+          onClose={() => setViewingReceipts(null)}
         />
       )}
     </>
@@ -346,13 +364,37 @@ function RecordPaymentModal({ row, onClose }: { row: FeeBoardRow; onClose: () =>
   );
 }
 
-function InvoiceModal({ name, invoice, onClose }: { name: string; invoice: InvoiceView; onClose: () => void }) {
+function InvoiceModal({
+  name,
+  invoice,
+  payments,
+  onClose,
+}: {
+  name: string;
+  invoice: InvoiceView;
+  payments: FeePaymentRow[];
+  onClose: () => void;
+}) {
   const save = useAction();
   return (
     <Modal title={`${name} — Month ${invoice.month_no}`} onClose={onClose}>
       <p className="text-sm text-slate-600 mb-3">
         Paid {rs(invoice.paid)} of {rs(invoice.amount - invoice.discount)} · <FeeBadge status={invoice.status} />
       </p>
+
+      {payments.length > 0 && (
+        <div className="rounded-xl border border-slate-200 p-3 mb-4">
+          <h3 className="font-semibold text-sm mb-1">Payments for this month</h3>
+          <p className="text-xs text-slate-400 mb-2">
+            Recorded by mistake? Undo it — the month goes back to unpaid.
+          </p>
+          <ul className="divide-y text-sm">
+            {payments.map((p) => (
+              <PaymentRowItem key={p.id} p={p} studentName={name} />
+            ))}
+          </ul>
+        </div>
+      )}
       <form action={(fd) => save.run(() => updateInvoice(invoice.id, fd), { onDone: onClose })} className="space-y-2">
         <div className="grid grid-cols-3 gap-2">
           <label>
@@ -375,6 +417,64 @@ function InvoiceModal({ name, invoice, onClose }: { name: string; invoice: Invoi
         </button>
         <Msg error={save.error} />
       </form>
+    </Modal>
+  );
+}
+
+function PaymentRowItem({ p, studentName }: { p: FeePaymentRow; studentName: string }) {
+  const del = useAction();
+  return (
+    <li className="py-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-medium tabular-nums">
+            {rs(p.amount)} <span className="text-slate-400 font-normal">· Month {p.month_no}</span>
+          </p>
+          <p className="text-xs text-slate-500">
+            <span className="font-mono">{p.receipt_no}</span> · {p.method}
+            {p.reference ? ` · ${p.reference}` : ""} · {fmt(p.paid_at)}
+          </p>
+        </div>
+        <button
+          onClick={() => {
+            if (!confirm(`Undo ${rs(p.amount)} for Month ${p.month_no} (${studentName})? The month goes back to unpaid.`))
+              return;
+            del.run(() => deletePaymentRow(p.id));
+          }}
+          disabled={del.pending}
+          className={btn.smallDanger}
+        >
+          Undo
+        </button>
+      </div>
+      <Msg error={del.error} />
+    </li>
+  );
+}
+
+function ReceiptsModal({
+  row,
+  payments,
+  onClose,
+}: {
+  row: FeeBoardRow;
+  payments: FeePaymentRow[];
+  onClose: () => void;
+}) {
+  return (
+    <Modal title={`${row.name} — payments`} onClose={onClose}>
+      <p className="text-sm text-slate-600 mb-3">
+        {rs(row.paid)} paid of {rs(row.total)}. Undo anything recorded by mistake.
+      </p>
+      {payments.length === 0 ? (
+        <p className="text-slate-400 text-sm">Nothing recorded yet.</p>
+      ) : (
+        <ul className="divide-y text-sm">
+          {payments.map((p) => (
+            <PaymentRowItem key={p.id} p={p} studentName={row.name} />
+          ))}
+        </ul>
+      )}
     </Modal>
   );
 }

@@ -40,7 +40,7 @@ async function loadBatchData(batchId: number, batches: Awaited<ReturnType<typeof
   const [{ stats, progress }, sessions, feeBoard, homework] = await Promise.all([
     getBatchOverview(batchId),
     settle(getBatchSessions(batchId), []),
-    settle(getFeeBoard(batchId), { rows: [], payments: [] }),
+    settle(getFeeBoard(batchId), { rows: [], payments: [], paymentRows: [] }),
     settle(getHomeworkBoard(batchId), { submissions: [], missing: [] }),
   ]);
   return { batch, stats, sessions, feeBoard, homework, progress };

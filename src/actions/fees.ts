@@ -39,12 +39,25 @@ export type FeePayment = {
   paid_at: string;
 };
 
-export type FeeBoard = { rows: FeeBoardRow[]; payments: FeePayment[] };
+/** One payment row: the part of a receipt that paid a single month. */
+export type FeePaymentRow = {
+  id: number;
+  invoice_id: number;
+  enrollment_id: number;
+  month_no: number;
+  receipt_no: string;
+  amount: number;
+  method: string;
+  reference: string | null;
+  paid_at: string;
+};
+
+export type FeeBoard = { rows: FeeBoardRow[]; payments: FeePayment[]; paymentRows: FeePaymentRow[] };
 
 /** Student × month grid plus the payment history (one line per receipt) for an intake. */
 export async function getFeeBoard(batchId: number): Promise<FeeBoard> {
   await assertAdmin();
-  const [invoices, enrollments, paymentRows] = await Promise.all([
+  const [invoices, enrollments, paymentRows, singleRows] = await Promise.all([
     loadInvoices({ batchId }),
     sql`
       SELECT e.id AS enrollment_id, e.student_id, s.name, s.whatsapp, e.status AS enrollment_status
@@ -65,6 +78,15 @@ export async function getFeeBoard(batchId: number): Promise<FeeBoard> {
       GROUP BY p.receipt_no, p.student_id, i.enrollment_id, s.name
       ORDER BY MIN(p.paid_at) DESC
     ` as unknown as Promise<(Omit<FeePayment, "amount" | "paid_at"> & { amount: string; paid_at: Date })[]>,
+    sql`
+      SELECT p.id, p.invoice_id, i.enrollment_id, i.month_no, p.receipt_no, p.amount,
+        p.method, p.reference, p.paid_at
+      FROM payments p
+      JOIN fee_invoices i ON i.id = p.invoice_id
+      JOIN enrollments e ON e.id = i.enrollment_id
+      WHERE e.batch_id = ${batchId}
+      ORDER BY p.paid_at DESC, p.id DESC
+    ` as unknown as Promise<(Omit<FeePaymentRow, "amount" | "paid_at"> & { amount: string; paid_at: Date })[]>,
   ]);
 
   const rows = enrollments.map((e) => {
@@ -83,7 +105,11 @@ export async function getFeeBoard(batchId: number): Promise<FeeBoard> {
     amount: Number(p.amount),
     paid_at: iso(p.paid_at),
   }));
-  return { rows, payments };
+  return {
+    rows,
+    payments,
+    paymentRows: singleRows.map((p) => ({ ...p, amount: Number(p.amount), paid_at: iso(p.paid_at) })),
+  };
 }
 
 /** Record a payment: a single month, or "auto" to fill unpaid months oldest first. */
@@ -115,6 +141,15 @@ export async function recordPayment(formData: FormData): Promise<{ error?: strin
   revalidatePath("/admin");
   revalidatePath("/portal");
   return res;
+}
+
+/** Undo one month of a payment (one row of a receipt); the rest of the receipt stays. */
+export async function deletePaymentRow(id: number): Promise<{ error?: string }> {
+  await assertAdmin();
+  await sql`DELETE FROM payments WHERE id = ${id}`;
+  revalidatePath("/admin");
+  revalidatePath("/portal");
+  return {};
 }
 
 /** Remove a whole receipt (all month rows it paid). */
