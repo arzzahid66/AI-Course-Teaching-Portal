@@ -112,7 +112,12 @@ export function HowToPay({
   amount,
   monthLabel,
 }: {
-  data: PortalData;
+  // Only these fields are read, so the login lock screen can pass its own data.
+  data: {
+    name: string;
+    enrollment: { batchName: string } | null;
+    fees: Pick<PortalData["fees"], "accounts" | "whatsapp">;
+  };
   amount: number;
   monthLabel: string;
 }) {
@@ -696,7 +701,7 @@ export function FeesTab({ data }: { data: PortalData }) {
               <p className="text-lg font-bold tabular-nums mt-1">{rs(i.amount - i.discount)}</p>
               <p className="text-xs text-slate-500">Due {fmtDay(i.due_date)}</p>
               {i.remaining > 0 && i.status !== "overdue" && (
-                <p className="text-[11px] text-slate-400">Pay by {fmtDay(i.grace_until)} to keep joining class</p>
+                <p className="text-[11px] text-slate-400">Pay by {fmtDay(i.grace_until)} to keep your account active</p>
               )}
               {i.remaining > 0 && i.paid > 0 && <p className="text-[11px] text-amber-700">{rs(i.remaining)} left</p>}
               {i.note && <p className="text-[11px] text-violet-600">{i.note}</p>}

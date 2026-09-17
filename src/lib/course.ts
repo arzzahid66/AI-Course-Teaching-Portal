@@ -139,11 +139,12 @@ export async function loadInvoices(opts: {
   const rows = (await sql`
     SELECT i.id, i.enrollment_id, e.student_id, i.month_no,
       to_char(i.due_date, 'YYYY-MM-DD') AS due_date,
-      to_char(i.due_date + b.grace_days, 'YYYY-MM-DD') AS grace_until,
+      to_char(GREATEST(i.due_date, (e.joined_at AT TIME ZONE 'Asia/Karachi')::date) + b.grace_days, 'YYYY-MM-DD') AS grace_until,
       i.amount, i.discount, i.note,
       COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id), 0) AS paid,
       (i.due_date <= (now() AT TIME ZONE 'Asia/Karachi')::date) AS past_due,
-      ((i.due_date + b.grace_days) < (now() AT TIME ZONE 'Asia/Karachi')::date) AS past_grace
+      ((GREATEST(i.due_date, (e.joined_at AT TIME ZONE 'Asia/Karachi')::date) + b.grace_days)
+        < (now() AT TIME ZONE 'Asia/Karachi')::date) AS past_grace
     FROM fee_invoices i
     JOIN enrollments e ON e.id = i.enrollment_id
     JOIN batches b ON b.id = e.batch_id
@@ -154,12 +155,17 @@ export async function loadInvoices(opts: {
   return rows.map(toInvoiceView);
 }
 
-/** First invoice that blocks this student's check-in, across active enrollments. */
+/**
+ * First invoice that blocks this student, across active enrollments: unpaid
+ * `grace_days` after the later of its due date and the day they joined (so a
+ * late joiner still gets the full grace period). Blocks check-in and locks the
+ * account (see getAccountLock).
+ */
 export async function getBlockingInvoice(studentId: number): Promise<InvoiceView | null> {
   const rows = (await sql`
     SELECT i.id, i.enrollment_id, e.student_id, i.month_no,
       to_char(i.due_date, 'YYYY-MM-DD') AS due_date,
-      to_char(i.due_date + b.grace_days, 'YYYY-MM-DD') AS grace_until,
+      to_char(GREATEST(i.due_date, (e.joined_at AT TIME ZONE 'Asia/Karachi')::date) + b.grace_days, 'YYYY-MM-DD') AS grace_until,
       i.amount, i.discount, i.note,
       COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id), 0) AS paid,
       true AS past_due,
@@ -168,10 +174,98 @@ export async function getBlockingInvoice(studentId: number): Promise<InvoiceView
     JOIN enrollments e ON e.id = i.enrollment_id
     JOIN batches b ON b.id = e.batch_id
     WHERE e.student_id = ${studentId} AND e.status = 'active'
-      AND (i.due_date + b.grace_days) < (now() AT TIME ZONE 'Asia/Karachi')::date
+      AND (GREATEST(i.due_date, (e.joined_at AT TIME ZONE 'Asia/Karachi')::date) + b.grace_days)
+        < (now() AT TIME ZONE 'Asia/Karachi')::date
     ORDER BY i.due_date ASC
   `) as InvoiceSqlRow[];
   return rows.map(toInvoiceView).find((i) => i.blocks) ?? null;
+}
+
+/** Ids of students whose account is locked by an unpaid fee month (same rule as getBlockingInvoice). */
+export async function loadFeeLockedStudentIds(): Promise<Set<number>> {
+  const rows = (await sql`
+    SELECT DISTINCT e.student_id
+    FROM fee_invoices i
+    JOIN enrollments e ON e.id = i.enrollment_id
+    JOIN batches b ON b.id = e.batch_id
+    WHERE e.status = 'active'
+      AND (GREATEST(i.due_date, (e.joined_at AT TIME ZONE 'Asia/Karachi')::date) + b.grace_days)
+        < (now() AT TIME ZONE 'Asia/Karachi')::date
+      AND GREATEST(0, i.amount - i.discount)
+        > COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id), 0)
+  `) as { student_id: number }[];
+  return new Set(rows.map((r) => Number(r.student_id)));
+}
+
+/** Ids of students on a free seat: every invoice of their active enrollments is fully waived. */
+export async function loadFreeSeatStudentIds(): Promise<Set<number>> {
+  const rows = (await sql`
+    SELECT e.student_id
+    FROM fee_invoices i
+    JOIN enrollments e ON e.id = i.enrollment_id
+    WHERE e.status = 'active'
+    GROUP BY e.student_id
+    HAVING bool_and(i.amount - i.discount <= 0)
+  `) as { student_id: number }[];
+  return new Set(rows.map((r) => Number(r.student_id)));
+}
+
+/** Waive every fee month of an enrollment (a free seat). */
+export async function waiveEnrollmentFees(enrollmentId: number): Promise<void> {
+  await sql`
+    UPDATE fee_invoices SET discount = amount, note = 'Free seat'
+    WHERE enrollment_id = ${enrollmentId}
+  `;
+}
+
+/** Why a student may not use the portal, or null when they can. */
+export type AccountLock =
+  | { kind: "inactive"; name: string; whatsapp: string }
+  | {
+      kind: "fee";
+      name: string;
+      batchName: string | null;
+      monthNo: number;
+      remaining: number;
+      dueDate: string;
+      graceUntil: string;
+      graceDays: number;
+      accounts: PaymentAccount[];
+      whatsapp: string;
+    };
+
+export async function getAccountLock(studentId: number): Promise<AccountLock | null> {
+  const rows = (await sql`SELECT name, status FROM students WHERE id = ${studentId} LIMIT 1`) as {
+    name: string;
+    status: string;
+  }[];
+  if (!rows[0]) return null;
+  const name = rows[0].name;
+  if (rows[0].status !== "active") {
+    return { kind: "inactive", name, whatsapp: (await getSetting("tutor_whatsapp")) ?? "" };
+  }
+  const inv = await getBlockingInvoice(studentId);
+  if (!inv) return null;
+  const [accounts, whatsapp, batch] = await Promise.all([
+    loadPaymentAccounts(true),
+    getSetting("tutor_whatsapp"),
+    sql`
+      SELECT b.name, b.grace_days FROM enrollments e JOIN batches b ON b.id = e.batch_id
+      WHERE e.id = ${inv.enrollment_id}
+    ` as unknown as Promise<{ name: string; grace_days: number }[]>,
+  ]);
+  return {
+    kind: "fee",
+    name,
+    batchName: batch[0]?.name ?? null,
+    monthNo: inv.month_no,
+    remaining: inv.remaining,
+    dueDate: inv.due_date,
+    graceUntil: inv.grace_until,
+    graceDays: Number(batch[0]?.grace_days ?? 7),
+    accounts,
+    whatsapp: whatsapp ?? "",
+  };
 }
 
 /** Create the monthly invoices for an enrollment (idempotent). */

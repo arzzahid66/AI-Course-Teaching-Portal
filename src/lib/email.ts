@@ -41,11 +41,24 @@ export function emailEnabled(): boolean {
   return getTransport() != null;
 }
 
-/** Absolute link into the student portal, or null when APP_URL is not set. */
+/** Site origin: APP_URL, else the production domain Vercel provides automatically. */
+function siteUrl(): string | null {
+  const app = (process.env.APP_URL ?? "").trim().replace(/\/+$/, "").replace(/\/portal$/, "");
+  if (app) return app;
+  const vercel = (process.env.VERCEL_PROJECT_PRODUCTION_URL ?? "").trim();
+  return vercel ? `https://${vercel}` : null;
+}
+
+/** Absolute link into the student portal, or null when the site URL is unknown. */
 export function portalUrl(): string | null {
-  const base = (process.env.APP_URL ?? "").trim().replace(/\/+$/, "");
-  if (!base) return null;
-  return /\/portal$/.test(base) ? base : `${base}/portal`;
+  const base = siteUrl();
+  return base ? `${base}/portal` : null;
+}
+
+/** Absolute link to the student login page, or null when the site URL is unknown. */
+export function loginUrl(): string | null {
+  const base = siteUrl();
+  return base ? `${base}/login` : null;
 }
 
 export type EmailMessage = {
@@ -53,7 +66,9 @@ export type EmailMessage = {
   heading: string;
   /** Paragraphs of plain text. Escaped; line breaks are kept. Falsy entries are skipped. */
   lines: (string | null | undefined | false)[];
-  /** Optional outbound link (e.g. a Meet link). The portal button is always added when APP_URL is set. */
+  /** Boxed blocks after the paragraphs (login details, fee status…). Lines are escaped; line breaks kept. */
+  sections?: { title: string; lines: string[]; tone?: "success" | "warning" | "neutral" }[];
+  /** Optional outbound link (e.g. a Meet link). The portal button is always added when the site URL is known. */
   link?: { label: string; url: string };
   replyTo?: string;
 };
@@ -85,6 +100,26 @@ function renderEmail(name: string | null, msg: EmailMessage): { html: string; te
         `<p style="margin:0 0 14px;font-size:15px;line-height:1.55;color:#334155">${escapeHtml(l).replace(/\r?\n/g, "<br>")}</p>`
     )
     .join("");
+  const tones = {
+    success: "background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46",
+    warning: "background:#fffbeb;border:1px solid #fde68a;color:#78350f",
+    neutral: "background:#f8fafc;border:1px solid #e2e8f0;color:#334155",
+  };
+  const sections = (msg.sections ?? [])
+    .map(
+      (s) =>
+        `<div style="${tones[s.tone ?? "neutral"]};border-radius:12px;padding:14px 16px;margin:0 0 14px">` +
+        `<p style="margin:0 0 8px;font-size:14px;font-weight:700">${escapeHtml(s.title)}</p>` +
+        s.lines
+          .filter((l) => l.trim())
+          .map(
+            (l) =>
+              `<p style="margin:0 0 6px;font-size:14px;line-height:1.55">${escapeHtml(l).replace(/\r?\n/g, "<br>")}</p>`
+          )
+          .join("") +
+        `</div>`
+    )
+    .join("");
   const buttons = [
     msg.link ? button(msg.link.label, msg.link.url, true) : "",
     portal ? button("Open the portal", portal, !msg.link) : "",
@@ -97,6 +132,7 @@ function renderEmail(name: string | null, msg: EmailMessage): { html: string; te
 <p style="margin:0 0 6px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#6366f1;font-weight:700">AI Engineering Course</p>
 <h1 style="margin:0 0 18px;font-size:20px;line-height:1.3;color:#0f172a">${escapeHtml(msg.heading)}</h1>
 ${paragraphs}
+${sections}
 ${buttons ? `<div style="margin-top:8px">${buttons}</div>` : ""}
 </td></tr></table>
 <p style="font-size:12px;color:#94a3b8;margin:14px 0 0">You are receiving this because you are enrolled in the AI Engineering Course.</p>
@@ -105,6 +141,7 @@ ${buttons ? `<div style="margin-top:8px">${buttons}</div>` : ""}
   const text = [
     greeting,
     ...lines,
+    ...(msg.sections ?? []).map((s) => [s.title.toUpperCase(), ...s.lines.filter((l) => l.trim())].join("\n")),
     msg.link ? `${msg.link.label}: ${msg.link.url}` : "",
     portal ? `Open the portal: ${portal}` : "",
   ]

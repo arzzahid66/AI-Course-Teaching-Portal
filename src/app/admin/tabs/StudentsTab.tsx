@@ -8,6 +8,8 @@ import {
   enrollStudent,
   getStudentDetail,
   moveEnrollment,
+  sendWelcomeEmail,
+  sendWelcomeEmailToIntake,
   setEnrollmentStatus,
   setStudentCredentials,
   setStudentStatus,
@@ -46,6 +48,7 @@ export default function StudentsTab({
   const add = useAction();
   const bulk = useAction();
   const toggle = useAction();
+  const welcomeAll = useAction();
   const [filter, setFilter] = useState<Filter>(batch ? "intake" : "all");
   const [query, setQuery] = useState("");
   const [payNow, setPayNow] = useState("none");
@@ -109,17 +112,21 @@ export default function StudentsTab({
           </select>
           <input name="email" type="email" placeholder="Login email" className={fieldClass()} />
           <input name="password" type="text" placeholder="Login password" className={fieldClass()} />
-          <select
-            name="pay_now"
-            value={payNow}
-            onChange={(e) => setPayNow(e.target.value)}
-            className={fieldClass()}
-          >
-            <option value="none">No payment yet</option>
-            <option value="month1">Paid Month 1 now</option>
-            <option value="full">Paid full batch now</option>
-          </select>
-          {payNow !== "none" ? (
+          <label className="block">
+            <span className="block text-xs font-medium text-slate-500 mb-1">Fee category</span>
+            <select
+              name="pay_now"
+              value={payNow}
+              onChange={(e) => setPayNow(e.target.value)}
+              className={fieldClass()}
+            >
+              <option value="none">Unpaid — pays later</option>
+              <option value="month1">Paid — Month 1</option>
+              <option value="full">Paid — full batch</option>
+              <option value="free">Free — no fee</option>
+            </select>
+          </label>
+          {payNow === "month1" || payNow === "full" ? (
             <div className="grid grid-cols-2 gap-2">
               <select name="method" className={fieldClass()} defaultValue="EasyPaisa">
                 <option>EasyPaisa</option>
@@ -130,8 +137,16 @@ export default function StudentsTab({
               <input name="reference" placeholder="Transaction ID" className={fieldClass()} />
             </div>
           ) : (
-            <div />
+            <p className="text-xs text-slate-500 self-end pb-2">
+              {payNow === "free"
+                ? "Every fee month is waived — the account is never locked for fees."
+                : "Unpaid months lock the account after the intake's grace period."}
+            </p>
           )}
+          <label className="flex items-center gap-2 text-sm text-slate-600 sm:col-span-2">
+            <input name="send_welcome" type="checkbox" defaultChecked className="h-4 w-4 accent-brand-600" />
+            Send welcome email (login details, portal content and fee status)
+          </label>
           <button type="submit" disabled={add.pending} className={`sm:col-span-2 ${btn.primary}`}>
             Add student
           </button>
@@ -143,7 +158,8 @@ export default function StudentsTab({
         <h2 className="font-bold mb-1">Bulk add to {batch?.name ?? "an intake"}</h2>
         <p className="text-slate-500 text-sm mb-2">
           One per line: <code>name, whatsapp, gender, email, password, paid</code>. Only name is
-          required. <code>paid</code> is <code>full</code> or an amount like <code>2000</code>.
+          required. <code>paid</code> is <code>full</code>, <code>free</code> or an amount like <code>2000</code>{" "}
+          (empty = unpaid).
         </p>
         <form
           ref={bulkRef}
@@ -165,6 +181,10 @@ export default function StudentsTab({
             placeholder={"Ayesha Khan, 03001234567, female, ayesha@mail.com, pass123, full\nBilal Ahmed, 03009876543, male, bilal@mail.com, pass456, 2000"}
             className={`${fieldClass()} font-mono text-sm`}
           />
+          <label className="flex items-center gap-2 text-sm text-slate-600 mt-2">
+            <input name="send_welcome" type="checkbox" defaultChecked className="h-4 w-4 accent-brand-600" />
+            Send welcome email to students with an email and password
+          </label>
           <button type="submit" disabled={bulk.pending || !batch} className={`mt-2 ${btn.dark}`}>
             Create all
           </button>
@@ -198,6 +218,32 @@ export default function StudentsTab({
             ))}
           </div>
         </div>
+        {batch && (
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <button
+              type="button"
+              disabled={welcomeAll.pending}
+              onClick={() => {
+                if (
+                  !confirm(
+                    `Send the welcome email (login details, portal content, fee status) to every active student in ${batch.name} who has a login?`
+                  )
+                )
+                  return;
+                welcomeAll.run(() => sendWelcomeEmailToIntake(batch.id), {
+                  success: (res) =>
+                    `Welcome email sent to ${res.sent} student(s).` +
+                    (res.skipped ? ` Skipped ${res.skipped} without a login.` : "") +
+                    (res.failed.length ? ` Failed: ${res.failed.join("; ")}` : ""),
+                });
+              }}
+              className={btn.small}
+            >
+              {welcomeAll.pending ? "Sending welcome emails…" : `✉ Send welcome email to all in ${batch.name}`}
+            </button>
+            <Msg error={welcomeAll.error} ok={welcomeAll.ok} />
+          </div>
+        )}
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -239,6 +285,22 @@ export default function StudentsTab({
                       >
                         {s.status}
                       </button>
+                      {s.fee_state === "locked" && (
+                        <span
+                          className="ml-1 text-xs rounded-full px-2 py-0.5 bg-rose-100 text-rose-700 whitespace-nowrap"
+                          title="A fee month is unpaid past the grace period, so the student can't use the portal. Record the payment, waive it, or move the due date in Fees to unlock."
+                        >
+                          locked · unpaid
+                        </span>
+                      )}
+                      {s.fee_state === "free" && (
+                        <span
+                          className="ml-1 text-xs rounded-full px-2 py-0.5 bg-violet-100 text-violet-700"
+                          title="Every fee month is waived"
+                        >
+                          free
+                        </span>
+                      )}
                     </td>
                     <td className="py-2 px-2 text-right whitespace-nowrap">
                       {s.email && <EmailStudentButton studentId={s.id} name={s.name} className={`${btn.small} mr-1.5`} />}
@@ -277,6 +339,7 @@ function StudentDetailModal({
   const creds = useAction();
   const enroll = useAction();
   const danger = useAction();
+  const welcome = useAction();
 
   async function load() {
     setData(await getStudentDetail(student.id));
@@ -292,7 +355,19 @@ function StudentDetailModal({
   return (
     <Modal title={student.name} onClose={onClose} wide>
       {student.email && (
-        <div className="flex justify-end -mt-1 mb-2">
+        <div className="flex flex-wrap items-center justify-end gap-1.5 -mt-1 mb-2">
+          <Msg error={welcome.error} ok={welcome.ok} />
+          <button
+            type="button"
+            disabled={welcome.pending}
+            onClick={() =>
+              welcome.run(() => sendWelcomeEmail(student.id), { success: `Welcome email sent to ${student.name}.` })
+            }
+            className={btn.small}
+            title="Login details, what's on the portal, and fee status"
+          >
+            {welcome.pending ? "Sending…" : "Send welcome email"}
+          </button>
           <EmailStudentButton studentId={student.id} name={student.name} />
         </div>
       )}

@@ -1,8 +1,9 @@
 "use client";
 
-import { useActionState, useEffect, useRef } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { studentLogin } from "@/actions/studentAuth";
+import AccountLocked from "./AccountLocked";
 
 function SubmitButton() {
   const { pending } = useFormStatus();
@@ -20,6 +21,8 @@ function SubmitButton() {
 export default function LoginForm() {
   const [state, formAction] = useActionState(studentLogin, {});
   const pwaRef = useRef<HTMLInputElement>(null);
+  // The lock screen replaces the form until "Back to login" dismisses this result.
+  const [dismissed, setDismissed] = useState<typeof state | null>(null);
 
   useEffect(() => {
     if (pwaRef.current) {
@@ -27,7 +30,12 @@ export default function LoginForm() {
         ? "true"
         : "false";
     }
-  }, []);
+    // Re-run when the form comes back from the lock screen (a fresh input).
+  }, [state, dismissed]);
+
+  if (state?.lock && dismissed !== state) {
+    return <AccountLocked lock={state.lock} onBack={() => setDismissed(state)} />;
+  }
 
   return (
     <main className="min-h-screen flex items-center justify-center p-5">
@@ -58,7 +66,7 @@ export default function LoginForm() {
           placeholder="Password"
           className="w-full rounded-2xl border border-slate-300 px-4 py-4 text-lg focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none"
         />
-        {state?.error && (
+        {state?.error && !state.lock && (
           <p className="text-center text-rose-600 text-sm font-medium">
             {state.error}
           </p>

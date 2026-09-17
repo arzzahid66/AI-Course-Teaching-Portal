@@ -17,8 +17,11 @@ import {
   insertPayment,
   iso,
   isoOrNull,
+  loadFeeLockedStudentIds,
+  loadFreeSeatStudentIds,
   loadInvoices,
   computeBatchProgress,
+  waiveEnrollmentFees,
   type InvoiceView,
   type ProgressRow,
 } from "@/lib/course";
@@ -30,6 +33,7 @@ import {
   queueStudentEmail,
   sendStudentEmailNow,
 } from "@/lib/email";
+import { queueWelcomeEmail, sendWelcomeEmailNow } from "@/lib/welcomeEmail";
 
 // ---------------------------------------------------------------------------
 // Auth
@@ -78,6 +82,8 @@ export type StudentRow = {
   email: string | null;
   has_login: boolean;
   status: string;
+  /** "free" = every fee month waived; "locked" = an unpaid month past its grace period. */
+  fee_state: "free" | "locked" | null;
   enrollments: StudentEnrollment[];
 };
 
@@ -87,7 +93,8 @@ export async function getStudents(): Promise<StudentRow[]> {
     SELECT id, name, whatsapp, gender, email, (password_hash IS NOT NULL) AS has_login, status
     FROM students
     ORDER BY created_at DESC, id DESC
-  `) as Omit<StudentRow, "enrollments">[];
+  `) as Omit<StudentRow, "enrollments" | "fee_state">[];
+  const [locked, free] = await Promise.all([loadFeeLockedStudentIds(), loadFreeSeatStudentIds()]);
   const enrollments = (await sql`
     SELECT e.id AS enrollment_id, e.student_id, e.batch_id, b.name AS batch_name, e.status
     FROM enrollments e JOIN batches b ON b.id = e.batch_id
@@ -95,6 +102,7 @@ export async function getStudents(): Promise<StudentRow[]> {
   `) as (StudentEnrollment & { student_id: number })[];
   return students.map((s) => ({
     ...s,
+    fee_state: free.has(s.id) ? "free" : locked.has(s.id) ? "locked" : null,
     enrollments: enrollments
       .filter((e) => e.student_id === s.id)
       .map(({ student_id: _ignored, ...e }) => e),
@@ -137,9 +145,9 @@ async function enroll(studentId: number, batchId: number): Promise<number> {
 }
 
 /**
- * Add a student, enroll them in the chosen intake, and (optionally) record a
- * payment straight away — "full" pays every month, a number pays that amount
- * oldest-month-first.
+ * Add a student, enroll them in the chosen intake, and apply their fee category:
+ * "month1" / "full" record a payment straight away, "free" waives every month,
+ * "none" leaves the fees unpaid. Optionally emails them a welcome message.
  */
 export async function addStudent(formData: FormData): Promise<{ error?: string; receiptNo?: string }> {
   await assertAdmin();
@@ -169,7 +177,9 @@ export async function addStudent(formData: FormData): Promise<{ error?: string; 
   const enrollmentId = await enroll(created.id, batchId);
 
   let receiptNo: string | undefined;
-  if (payNow === "month1" || payNow === "full") {
+  if (payNow === "free") {
+    await waiveEnrollmentFees(enrollmentId);
+  } else if (payNow === "month1" || payNow === "full") {
     const invoices = await loadInvoices({ enrollmentId });
     const amount =
       payNow === "full"
@@ -189,6 +199,7 @@ export async function addStudent(formData: FormData): Promise<{ error?: string; 
       receiptNo = res.receiptNo;
     }
   }
+  if (email && password && formData.get("send_welcome") === "on") queueWelcomeEmail(created.id);
   revalidatePath("/admin");
   return { receiptNo };
 }
@@ -196,7 +207,8 @@ export async function addStudent(formData: FormData): Promise<{ error?: string; 
 /**
  * Bulk create from lines of "name, whatsapp, gender, email, password, paid".
  * Everyone is enrolled into the chosen intake. The optional 6th column is
- * "full" (pays every month) or an amount in Rs (paid oldest month first).
+ * "full" (pays every month), "free" (every month waived) or an amount in Rs
+ * (paid oldest month first).
  */
 export async function bulkAddStudents(
   formData: FormData
@@ -229,7 +241,9 @@ export async function bulkAddStudents(
     }
     const enrollmentId = await enroll(res.id, batchId);
     const paid = (parts[5] || "").toLowerCase();
-    if (paid) {
+    if (paid === "free") {
+      await waiveEnrollmentFees(enrollmentId);
+    } else if (paid) {
       const invoices = await loadInvoices({ enrollmentId });
       const due = invoices.reduce((s, i) => s + i.remaining, 0);
       const amount = paid === "full" ? due : Number(paid);
@@ -245,6 +259,7 @@ export async function bulkAddStudents(
         });
       }
     }
+    if (email && parts[4] && formData.get("send_welcome") === "on") queueWelcomeEmail(res.id);
     created += 1;
   }
   revalidatePath("/admin");
@@ -350,7 +365,13 @@ export async function moveEnrollment(
   `) as { student_id: number; batch_id: number }[];
   if (!rows[0]) return { error: "Enrollment not found." };
   if (rows[0].batch_id === toBatchId) return { error: "The student is already in that intake." };
-  await enroll(rows[0].student_id, toBatchId);
+  const free = (await sql`
+    SELECT COUNT(*) > 0 AND bool_and(amount - discount <= 0) AS free
+    FROM fee_invoices WHERE enrollment_id = ${enrollmentId}
+  `) as { free: boolean | null }[];
+  const newEnrollmentId = await enroll(rows[0].student_id, toBatchId);
+  // A free seat stays free in the new intake.
+  if (free[0]?.free) await waiveEnrollmentFees(newEnrollmentId);
   await sql`UPDATE enrollments SET status = 'dropped' WHERE id = ${enrollmentId}`;
   revalidatePath("/admin");
   return {};
@@ -1000,4 +1021,32 @@ export async function sendStudentEmail(
   if (subject.length > 200) return { error: "Subject is too long." };
   if (message.length > 5000) return { error: "Message is too long (5000 characters max)." };
   return sendStudentEmailNow(studentId, { subject, heading: subject, lines: [message] });
+}
+
+// ---------------------------------------------------------------------------
+// Welcome email (login details, what's on the portal, fee status)
+// ---------------------------------------------------------------------------
+export async function sendWelcomeEmail(studentId: number): Promise<{ error?: string }> {
+  await assertAdmin();
+  return sendWelcomeEmailNow(studentId);
+}
+
+/** Welcome every active student of an intake who has a login email + password. */
+export async function sendWelcomeEmailToIntake(
+  batchId: number
+): Promise<{ error?: string; sent: number; skipped: number; failed: string[] }> {
+  await assertAdmin();
+  const rows = (await sql`
+    SELECT s.id, s.name,
+      (s.email IS NOT NULL AND btrim(s.email) <> '' AND s.password_plain IS NOT NULL) AS has_login
+    FROM enrollments e JOIN students s ON s.id = e.student_id
+    WHERE e.batch_id = ${batchId} AND e.status = 'active' AND s.status = 'active'
+  `) as { id: number; name: string; has_login: boolean }[];
+  const withLogin = rows.filter((r) => r.has_login);
+  if (withLogin.length === 0) {
+    return { error: "No active student in this intake has a login email and password.", sent: 0, skipped: rows.length, failed: [] };
+  }
+  const results = await Promise.all(withLogin.map(async (r) => ({ r, res: await sendWelcomeEmailNow(r.id) })));
+  const failed = results.filter((x) => x.res.error).map((x) => `${x.r.name} (${x.res.error})`);
+  return { sent: withLogin.length - failed.length, skipped: rows.length - withLogin.length, failed };
 }
