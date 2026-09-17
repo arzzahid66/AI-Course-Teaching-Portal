@@ -18,6 +18,7 @@ import type { InvoiceView, PaymentAccount } from "@/lib/course";
 import type { BatchRow } from "@/lib/course";
 import {
   Card,
+  EmailStudentButton,
   EmptyRow,
   FeeBadge,
   Modal,
@@ -149,6 +150,9 @@ export default function FeesTab({
                     {r.enrollment_status !== "active" && (
                       <span className="text-xs text-slate-400 font-normal"> · {r.enrollment_status}</span>
                     )}
+                    <span className="block mt-1">
+                      <EmailStudentButton studentId={r.student_id} name={r.name} defaultSubject="About your fees" />
+                    </span>
                   </td>
                   {months.map((m) => {
                     const i = r.invoices.find((x) => x.month_no === m);

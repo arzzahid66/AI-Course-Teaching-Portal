@@ -19,6 +19,7 @@ import type { BatchRow } from "@/lib/course";
 import {
   BandBadge,
   Card,
+  EmailStudentButton,
   EmptyRow,
   FeeBadge,
   Modal,
@@ -239,7 +240,8 @@ export default function StudentsTab({
                         {s.status}
                       </button>
                     </td>
-                    <td className="py-2 px-2 text-right">
+                    <td className="py-2 px-2 text-right whitespace-nowrap">
+                      {s.email && <EmailStudentButton studentId={s.id} name={s.name} className={`${btn.small} mr-1.5`} />}
                       <button onClick={() => setSelected(s)} className={btn.small}>
                         View / Edit
                       </button>
@@ -289,6 +291,11 @@ function StudentDetailModal({
 
   return (
     <Modal title={student.name} onClose={onClose} wide>
+      {student.email && (
+        <div className="flex justify-end -mt-1 mb-2">
+          <EmailStudentButton studentId={student.id} name={student.name} />
+        </div>
+      )}
       <details className="rounded-xl border border-slate-200 p-3 mb-3">
         <summary className="font-semibold text-sm cursor-pointer">Details &amp; login</summary>
         <form

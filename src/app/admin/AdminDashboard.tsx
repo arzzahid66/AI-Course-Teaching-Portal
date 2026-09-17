@@ -59,7 +59,7 @@ import {
   QUIZ_DEFAULT_MAX_ATTEMPTS,
   COURSE_NAME,
 } from "@/lib/constants";
-import { Card, fieldClass, fmt, genderBucket, GENDER_META } from "./ui";
+import { Card, EmailStudentButton, fieldClass, fmt, genderBucket, GENDER_META } from "./ui";
 import DashboardTab from "./tabs/DashboardTab";
 import IntakesTab from "./tabs/IntakesTab";
 import StudentsTab from "./tabs/StudentsTab";
@@ -589,6 +589,15 @@ function QuestionItem({ q }: { q: QuestionRow }) {
           <p className="text-slate-400 text-xs break-all">
             {q.student_email || "no email on file"} · {fmt(q.created_at)}
           </p>
+          {q.student_email && (
+            <div className="mt-1">
+              <EmailStudentButton
+                studentId={q.student_id}
+                name={q.student_name}
+                defaultSubject={q.subject ? `Re: ${q.subject}` : "About your question"}
+              />
+            </div>
+          )}
         </div>
         <span
           className={`shrink-0 text-xs rounded-full px-2 py-0.5 font-medium ${
@@ -778,6 +787,15 @@ function LeaveItem({ leave }: { leave: LeaveRow }) {
           <p className="text-slate-400 text-xs break-all">
             {leave.student_email || "no email on file"} · sent {fmt(leave.created_at)}
           </p>
+          {leave.student_email && (
+            <div className="mt-1">
+              <EmailStudentButton
+                studentId={leave.student_id}
+                name={leave.student_name}
+                defaultSubject={`About your leave request${leave.lesson_title ? `: ${leave.lesson_title}` : ""}`}
+              />
+            </div>
+          )}
         </div>
         <span
           className={`shrink-0 text-xs rounded-full px-2 py-0.5 font-medium ${meta.chip}`}
@@ -1009,6 +1027,10 @@ function QuizTab({
           <label className="flex items-center gap-2 text-sm">
             <input name="is_published" type="checkbox" className="h-4 w-4 accent-brand-600" />
             Publish now (students can see &amp; attempt it)
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input name="notify_email" type="checkbox" defaultChecked className="h-4 w-4 accent-brand-600" />
+            Email students when published
           </label>
           <input name="sort_order" type="hidden" defaultValue={quizzes.length} />
           <button
@@ -1423,6 +1445,15 @@ function QuizRequestItem({ req }: { req: QuizReattemptRow }) {
           <p className="text-slate-400 text-xs break-all">
             {req.student_email || "no email on file"} · {fmt(req.created_at)}
           </p>
+          {req.student_email && (
+            <div className="mt-1">
+              <EmailStudentButton
+                studentId={req.student_id}
+                name={req.student_name}
+                defaultSubject={`About quiz: ${req.quiz_title}`}
+              />
+            </div>
+          )}
         </div>
         <span className={`shrink-0 text-xs rounded-full px-2 py-0.5 font-medium ${m.chip}`}>
           {m.label}
@@ -1599,6 +1630,12 @@ function QuizEditModal({ quizId, onClose }: { quizId: number; onClose: () => voi
                   />
                   Published
                 </label>
+                {!detail.is_published && (
+                  <label className="flex items-center gap-2 text-sm">
+                    <input name="notify_email" type="checkbox" defaultChecked className="h-4 w-4 accent-brand-600" />
+                    Email students when published
+                  </label>
+                )}
                 <input name="sort_order" type="hidden" defaultValue={detail.sort_order} />
                 <button
                   type="submit"
@@ -1701,7 +1738,7 @@ function QuizEditModal({ quizId, onClose }: { quizId: number; onClose: () => voi
 
             {/* Results */}
             <div className="mt-5">
-              <QuizResultsPanel quizId={quizId} />
+              <QuizResultsPanel quizId={quizId} quizTitle={detail.title} />
             </div>
           </>
         )}
@@ -1841,7 +1878,7 @@ function QuestionForm({
 }
 
 /** Per-student results for one quiz, loaded lazily inside the editor modal. */
-function QuizResultsPanel({ quizId }: { quizId: number }) {
+function QuizResultsPanel({ quizId, quizTitle }: { quizId: number; quizTitle: string }) {
   const [rows, setRows] = useState<QuizResultRow[] | null>(null);
 
   useEffect(() => {
@@ -1871,6 +1908,9 @@ function QuizResultsPanel({ quizId }: { quizId: number }) {
             <li key={r.student_id} className="flex items-center justify-between py-1.5 gap-2">
               <span className="min-w-0 truncate">{r.name}</span>
               <span className="flex items-center gap-2 shrink-0">
+                {r.email && (
+                  <EmailStudentButton studentId={r.student_id} name={r.name} defaultSubject={`About quiz: ${quizTitle}`} />
+                )}
                 <span className="text-slate-400 text-xs">
                   {r.attemptsUsed}/{r.attemptsAllowed}
                 </span>

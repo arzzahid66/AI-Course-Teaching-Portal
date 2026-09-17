@@ -220,6 +220,10 @@ function AddVideoForm({ weekendId, nextKind }: { weekendId: number; nextKind: st
       <button type="submit" disabled={act.pending} className={btn.primary}>
         Add
       </button>
+      <label className="flex items-center gap-2 text-sm text-slate-600 sm:col-span-4">
+        <input name="notify_email" type="checkbox" defaultChecked className="h-4 w-4 accent-brand-600" />
+        Email students about this video
+      </label>
       <Msg error={act.error} />
     </form>
   );
@@ -256,6 +260,10 @@ function WeekendModal({ weekend, onClose }: { weekend: WeekendRow; onClose: () =
         <label className="block">
           <span className={label}>Homework (empty = no homework this weekend)</span>
           <textarea name="homework" rows={2} defaultValue={weekend.homework ?? ""} className={fieldClass()} />
+        </label>
+        <label className="flex items-center gap-2 text-sm text-slate-600">
+          <input name="notify_email" type="checkbox" defaultChecked className="h-4 w-4 accent-brand-600" />
+          Email students if the homework changed
         </label>
         <label className="block">
           <span className={label}>Slides &amp; extra links (one per line, “Label | https://…”)</span>

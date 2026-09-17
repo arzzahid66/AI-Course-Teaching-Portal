@@ -6,7 +6,13 @@ import { assertAdmin } from "@/lib/auth";
 import { iso, isoOrNull } from "@/lib/course";
 import { normalizeUrl } from "@/lib/constants";
 import { notifyStudent } from "@/lib/pushNotifications";
+import { queueBroadcastEmail, queueStudentEmail } from "@/lib/email";
 import { loadCurriculum, type Curriculum } from "@/lib/curriculum";
+
+/** The admin forms send `notify_email=on` when "Email students" is ticked. */
+function wantsEmail(formData: FormData): boolean {
+  return formData.get("notify_email") === "on";
+}
 
 export async function getCurriculumAdmin(): Promise<Curriculum> {
   await assertAdmin();
@@ -34,13 +40,33 @@ export async function updateWeekend(id: number, formData: FormData): Promise<{ e
   const text = (k: string) => String(formData.get(k) ?? "").trim() || null;
   const title = text("title");
   if (!title) return { error: "Title is required." };
-  await sql`
+  const before = (await sql`SELECT homework FROM weekends WHERE id = ${id}`) as { homework: string | null }[];
+  const homework = text("homework");
+  const rows = (await sql`
     UPDATE weekends
     SET title = ${title}, ng_skill = ${text("ng_skill")}, tag = ${text("tag")},
       topics = ${text("topics")}, you_build = ${text("you_build")},
-      homework = ${text("homework")}, slides = ${text("slides")}
+      homework = ${homework}, slides = ${text("slides")}
     WHERE id = ${id}
-  `;
+    RETURNING level, weekend_no
+  `) as { level: number; weekend_no: number }[];
+
+  // Only a real homework change is worth an email — not every save of the weekend.
+  const w = rows[0];
+  if (w && homework && homework !== (before[0]?.homework ?? "").trim() && wantsEmail(formData)) {
+    queueBroadcastEmail(
+      { level: w.level },
+      {
+        subject: `Homework for Weekend ${w.weekend_no}: ${title}`,
+        heading: `Weekend ${w.weekend_no} homework`,
+        lines: [
+          `The homework for "${title}" has been ${before[0]?.homework ? "updated" : "posted"}:`,
+          homework,
+          "Submit your link from the Homework section of the portal.",
+        ],
+      }
+    );
+  }
   revalidatePath("/admin");
   revalidatePath("/portal");
   return {};
@@ -64,6 +90,22 @@ export async function addVideo(weekendId: number, formData: FormData): Promise<{
     INSERT INTO weekend_videos (weekend_id, title, url, kind, sort_order)
     VALUES (${weekendId}, ${v.title}, ${v.url}, ${v.kind}, ${v.sortOrder})
   `;
+  if (wantsEmail(formData)) {
+    const w = (await sql`
+      SELECT level, weekend_no, title FROM weekends WHERE id = ${weekendId}
+    `) as { level: number; weekend_no: number; title: string }[];
+    if (w[0]) {
+      queueBroadcastEmail(
+        { level: w[0].level },
+        {
+          subject: `New video: ${v.title}`,
+          heading: "A new video is up",
+          lines: [`"${v.title}" was added to Weekend ${w[0].weekend_no} — ${w[0].title}.`],
+          link: { label: "Watch the video", url: v.url },
+        }
+      );
+    }
+  }
   revalidatePath("/admin");
   revalidatePath("/portal");
   return {};
@@ -189,6 +231,19 @@ export async function reviewHomework(id: number, formData: FormData): Promise<{ 
       body: feedback ? feedback.slice(0, 100) : "Open the Homework tab to see the details.",
       url: "/portal",
     }).catch(() => {});
+    queueStudentEmail(r.student_id, {
+      subject:
+        status === "approved"
+          ? `Weekend ${r.weekend_no} homework approved: ${marks}/10`
+          : `Weekend ${r.weekend_no} homework needs changes`,
+      heading: status === "approved" ? "Your homework was approved" : "Your homework needs a few changes",
+      lines: [
+        status === "approved"
+          ? `Your Weekend ${r.weekend_no} homework was marked ${marks}/10.`
+          : `Your Weekend ${r.weekend_no} homework was reviewed and needs some changes${marks != null ? ` (currently ${marks}/10)` : ""}. Update it and submit again.`,
+        feedback ? `Feedback:\n${feedback}` : null,
+      ],
+    });
   }
   revalidatePath("/admin");
   revalidatePath("/portal");

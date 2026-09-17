@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
+import { sendStudentEmail } from "@/actions/admin";
 
 // ---------------------------------------------------------------------------
 // Shared admin UI primitives
@@ -285,5 +287,125 @@ export function EmptyRow({ colSpan, children }: { colSpan: number; children: Rea
         {children}
       </td>
     </tr>
+  );
+}
+
+/**
+ * "✉ Email" button that opens a compose box and emails one student directly.
+ * The modal is portaled to <body> and uses no <form>, so it can sit inside
+ * other forms, clickable table rows or another modal without side effects.
+ */
+export function EmailStudentButton({
+  studentId,
+  name,
+  defaultSubject = "",
+  className = btn.small,
+}: {
+  studentId: number;
+  name: string;
+  defaultSubject?: string;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [subject, setSubject] = useState(defaultSubject);
+  const [message, setMessage] = useState("");
+  const [sent, setSent] = useState(false);
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => setMounted(true), []);
+
+  function close() {
+    setOpen(false);
+    setSent(false);
+    setError(null);
+  }
+
+  function send() {
+    setError(null);
+    const fd = new FormData();
+    fd.set("subject", subject);
+    fd.set("message", message);
+    start(async () => {
+      try {
+        const res = await sendStudentEmail(studentId, fd);
+        if (res.error) setError(res.error);
+        else {
+          setSent(true);
+          setMessage("");
+          setSubject(defaultSubject);
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not send the email.");
+      }
+    });
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
+        className={className}
+        title={`Email ${name}`}
+      >
+        ✉ Email
+      </button>
+      {open &&
+        mounted &&
+        createPortal(
+          // Stop clicks from bubbling (through the React tree) to a clickable row behind.
+          <div onClick={(e) => e.stopPropagation()}>
+            <Modal title={`Email ${name}`} onClose={close}>
+              {sent ? (
+                <div className="space-y-3">
+                  <p className="text-emerald-600 text-sm">Email sent to {name}.</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button" onClick={() => setSent(false)} className={btn.dark}>
+                      Write another
+                    </button>
+                    <button type="button" onClick={close} className={btn.primary}>
+                      Done
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <input
+                    value={subject}
+                    onChange={(e) => setSubject(e.target.value)}
+                    placeholder="Subject"
+                    maxLength={200}
+                    className={fieldClass()}
+                    autoFocus={!subject}
+                  />
+                  <textarea
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    placeholder={`Message to ${name}…`}
+                    rows={7}
+                    maxLength={5000}
+                    className={fieldClass()}
+                    autoFocus={!!subject}
+                  />
+                  <button
+                    type="button"
+                    onClick={send}
+                    disabled={pending || !subject.trim() || !message.trim()}
+                    className={`w-full ${btn.primary}`}
+                  >
+                    {pending ? "Sending…" : "Send email"}
+                  </button>
+                  <Msg error={error} />
+                </div>
+              )}
+            </Modal>
+          </div>,
+          document.body
+        )}
+    </>
   );
 }

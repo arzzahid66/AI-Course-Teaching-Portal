@@ -24,6 +24,12 @@ import {
 } from "@/lib/course";
 import { recordLoginLog } from "@/lib/loginLog";
 import { notifyStudent } from "@/lib/pushNotifications";
+import {
+  fmtClassTime,
+  queueBroadcastEmail,
+  queueStudentEmail,
+  sendStudentEmailNow,
+} from "@/lib/email";
 
 // ---------------------------------------------------------------------------
 // Auth
@@ -559,6 +565,33 @@ function readSessionForm(formData: FormData) {
   };
 }
 
+/**
+ * Email the intake that a class is starting now (Meet link) or has been
+ * scheduled. The spoken check-in code is never included — it proves presence.
+ */
+function emailClass(
+  kind: "started" | "scheduled",
+  s: { batch_id: number; title: string; scheduled_at: Date | string; meet_link: string }
+) {
+  const when = fmtClassTime(s.scheduled_at);
+  const link = s.meet_link.trim() ? { label: "Join the class", url: s.meet_link } : undefined;
+  queueBroadcastEmail(
+    { batchId: s.batch_id },
+    kind === "started"
+      ? {
+          subject: `Class is starting now: ${s.title}`,
+          heading: "Your class is live",
+          lines: [`"${s.title}" has started. Join now and check in from the portal.`],
+          link,
+        }
+      : {
+          subject: `Class scheduled: ${s.title} — ${when}`,
+          heading: "A class has been scheduled",
+          lines: [`"${s.title}" is scheduled for ${when} (Pakistan time).`, "The Meet link will be on the portal when the class starts."],
+        }
+  );
+}
+
 /** Start a brand-new (extra) class right now for an intake. */
 export async function createSession(formData: FormData): Promise<{ error?: string }> {
   await assertAdmin();
@@ -572,6 +605,7 @@ export async function createSession(formData: FormData): Promise<{ error?: strin
     INSERT INTO sessions (batch_id, title, scheduled_at, meet_link, code, is_open)
     VALUES (${f.batchId}, ${f.title}, ${f.scheduledAt}, ${f.meetLink}, ${f.code}, true)
   `;
+  emailClass("started", { batch_id: f.batchId, title: f.title, scheduled_at: f.scheduledAt, meet_link: f.meetLink });
   revalidatePath("/admin");
   return {};
 }
@@ -586,6 +620,7 @@ export async function scheduleSession(formData: FormData): Promise<{ error?: str
     INSERT INTO sessions (batch_id, title, scheduled_at, meet_link, code, is_open)
     VALUES (${f.batchId}, ${f.title}, ${f.scheduledAt}, ${f.meetLink}, ${f.code}, false)
   `;
+  emailClass("scheduled", { batch_id: f.batchId, title: f.title, scheduled_at: f.scheduledAt, meet_link: f.meetLink });
   revalidatePath("/admin");
   return {};
 }
@@ -621,8 +656,8 @@ export async function closeSession(sessionId: number): Promise<{ error?: string 
 export async function openSession(sessionId: number): Promise<{ error?: string }> {
   await assertAdmin();
   const rows = (await sql`
-    SELECT meet_link, code FROM sessions WHERE id = ${sessionId}
-  `) as { meet_link: string; code: string }[];
+    SELECT batch_id, title, scheduled_at, meet_link, code FROM sessions WHERE id = ${sessionId}
+  `) as { batch_id: number; title: string; scheduled_at: Date; meet_link: string; code: string }[];
   if (!rows[0]) return { error: "Class not found." };
   if (!rows[0].meet_link.trim() || !rows[0].code.trim()) {
     return { error: "Add the Meet link and today's code (Edit) before starting this class." };
@@ -632,6 +667,7 @@ export async function openSession(sessionId: number): Promise<{ error?: string }
     UPDATE sessions SET is_open = true, closed_at = NULL, created_at = now()
     WHERE id = ${sessionId}
   `;
+  emailClass("started", rows[0]);
   revalidatePath("/admin");
   return {};
 }
@@ -775,6 +811,11 @@ export async function answerQuestion(
         body: q.subject ? `Re: ${q.subject} — ${answer.slice(0, 80)}` : answer.slice(0, 100),
         url: "/portal",
       }).catch(() => {});
+      queueStudentEmail(q.student_id, {
+        subject: q.subject ? `Re: ${q.subject}` : "Your question was answered",
+        heading: "Your question was answered",
+        lines: [`You asked:\n${q.subject ? `${q.subject}\n` : ""}${q.body}`, `Reply:\n${answer}`],
+      });
     }
   } catch (e) {
     return { error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save reply." };
@@ -914,6 +955,15 @@ export async function reviewLeaveRequest(
           (feedback ? ` Note: ${feedback.slice(0, 80)}` : ""),
         url: "/portal",
       }).catch(() => {});
+      queueStudentEmail(l.student_id, {
+        subject: `Leave ${status}${l.lesson_title ? `: ${l.lesson_title}` : ""}`,
+        heading: status === "approved" ? "Your leave was approved" : "Your leave request was not approved",
+        lines: [
+          `Your leave request${lesson} was ${status}.` +
+            (status === "approved" ? " You are marked excused for that class." : ""),
+          feedback ? `Note from your tutor:\n${feedback}` : null,
+        ],
+      });
     }
   } catch (e) {
     return { error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save review." };
@@ -933,4 +983,21 @@ export async function deleteLeaveRequest(id: number): Promise<{ error?: string }
   }
   revalidatePath("/admin");
   return {};
+}
+
+// ---------------------------------------------------------------------------
+// Direct email to one student (the "Email" button on student rows)
+// ---------------------------------------------------------------------------
+export async function sendStudentEmail(
+  studentId: number,
+  formData: FormData
+): Promise<{ error?: string; name?: string }> {
+  await assertAdmin();
+  const subject = String(formData.get("subject") ?? "").trim();
+  const message = String(formData.get("message") ?? "").trim();
+  if (!subject) return { error: "Write a subject." };
+  if (!message) return { error: "Write a message." };
+  if (subject.length > 200) return { error: "Subject is too long." };
+  if (message.length > 5000) return { error: "Message is too long (5000 characters max)." };
+  return sendStudentEmailNow(studentId, { subject, heading: subject, lines: [message] });
 }

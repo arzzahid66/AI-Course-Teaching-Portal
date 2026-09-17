@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { deleteHomework, reviewHomework, type HomeworkBoard, type HomeworkRow } from "@/actions/curriculum";
-import { Card, Msg, btn, fieldClass, fmt, useAction } from "../ui";
+import { Card, EmailStudentButton, Msg, btn, fieldClass, fmt, useAction } from "../ui";
 
 const STATUS: Record<string, { label: string; className: string }> = {
   submitted: { label: "To mark", className: "bg-amber-100 text-amber-700" },
@@ -98,10 +98,17 @@ function HomeworkItem({ row }: { row: HomeworkRow }) {
           {row.note && <p className="text-sm text-slate-600 mt-0.5">“{row.note}”</p>}
           <p className="text-xs text-slate-400">Submitted {fmt(row.submitted_at)}</p>
         </div>
-        <span className={`text-xs rounded-full px-2 py-0.5 shrink-0 ${meta.className}`}>
-          {row.marks != null ? `${row.marks}/10 · ` : ""}
-          {meta.label}
-        </span>
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
+          <span className={`text-xs rounded-full px-2 py-0.5 ${meta.className}`}>
+            {row.marks != null ? `${row.marks}/10 · ` : ""}
+            {meta.label}
+          </span>
+          <EmailStudentButton
+            studentId={row.student_id}
+            name={row.name}
+            defaultSubject={`About your Weekend ${row.weekend_no} homework`}
+          />
+        </div>
       </div>
       <form
         action={(fd) => act.run(() => reviewHomework(row.id, fd), { success: "Saved and student notified." })}

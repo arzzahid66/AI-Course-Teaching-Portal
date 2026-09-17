@@ -67,6 +67,13 @@ npm run dev
 
 `.env` needs `DATABASE_URL` and `ADMIN_PASSWORD` (optional: `ADMIN_EMAIL`,
 `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_EMAIL` for push notifications).
+
+Student emails (optional) need `EMAIL_ENABLED=true`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
+`SMTP_PASSWORD` (a Gmail app password), `SMTP_FROM`, `SMTP_USE_TLS`, and `APP_URL` (the site's
+base URL, used for the "Open the portal" button). Student replies go to the sending Gmail
+account, or to `EMAIL_REPLY_TO` if set. Emails are sent for
+new videos, homework changes, published quizzes, classes, reviews, answers, receipts and fee
+reminders; the "✉ Email" button on any student sends a custom message.
 Open <http://localhost:3000>; admin is at `/admin`, students at `/login`.
 
 ## Database

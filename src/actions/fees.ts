@@ -13,6 +13,9 @@ import {
   type PaymentAccount,
 } from "@/lib/course";
 import { notifyStudent } from "@/lib/pushNotifications";
+import { queueStudentEmail } from "@/lib/email";
+
+const rsText = (n: number) => `Rs ${n.toLocaleString("en-PK")}`;
 
 export type FeeBoardRow = {
   enrollment_id: number;
@@ -138,6 +141,27 @@ export async function recordPayment(formData: FormData): Promise<{ error?: strin
     paidAt: /^\d{4}-\d{2}-\d{2}$/.test(paidOn) ? paidOn : null,
   });
   if (res.error) return res;
+  if (res.receiptNo) {
+    const paid = (await sql`
+      SELECT p.student_id, array_agg(i.month_no ORDER BY i.month_no) AS months
+      FROM payments p JOIN fee_invoices i ON i.id = p.invoice_id
+      WHERE p.receipt_no = ${res.receiptNo}
+      GROUP BY p.student_id
+    `) as { student_id: number; months: number[] }[];
+    if (paid[0]) {
+      const months = paid[0].months.map(Number);
+      queueStudentEmail(paid[0].student_id, {
+        subject: `Payment received — receipt ${res.receiptNo}`,
+        heading: "Payment received, thank you",
+        lines: [
+          `We received ${rsText(amount)} by ${method}.`,
+          `Receipt no: ${res.receiptNo}\nFor month${months.length > 1 ? "s" : ""}: ${months.join(", ")}` +
+            (reference ? `\nTransaction ID: ${reference}` : ""),
+          "Your fee details are always up to date in the Fees section of the portal.",
+        ],
+      });
+    }
+  }
   revalidatePath("/admin");
   revalidatePath("/portal");
   return res;
@@ -205,6 +229,18 @@ export async function sendFeeReminders(batchId: number): Promise<{ sent: number;
       }).catch(() => {})
     )
   );
+  for (const [studentId, remaining] of byStudent) {
+    const months = due.filter((i) => i.student_id === studentId);
+    queueStudentEmail(studentId, {
+      subject: `Fee reminder: ${rsText(remaining)} due`,
+      heading: "Friendly fee reminder",
+      lines: [
+        `${rsText(remaining)} is due for your course fee.`,
+        months.map((i) => `Month ${i.month_no}: ${rsText(i.remaining)} (due ${i.due_date})`).join("\n"),
+        "Unpaid fees past the grace period block class check-in. Open the Fees section of the portal to see how to pay.",
+      ],
+    });
+  }
   return { sent: byStudent.size };
 }
 

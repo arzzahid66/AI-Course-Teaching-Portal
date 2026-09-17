@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { BatchRow, ProgressRow } from "@/lib/course";
-import { BAND_META, BandBadge, Card, EmptyRow, MiniBar, btn, downloadCsv } from "../ui";
+import { BAND_META, BandBadge, Card, EmailStudentButton, EmptyRow, MiniBar, btn, downloadCsv } from "../ui";
 
 type SortKey = "score" | "name" | "attendance" | "homework" | "quiz" | "videos";
 
@@ -173,6 +173,9 @@ function FragmentRow({
                 weight={r.videos.weight}
                 detail={`${r.videos.watched} of ${r.videos.released} watched`}
               />
+            </div>
+            <div className="mt-3">
+              <EmailStudentButton studentId={r.student_id} name={r.name} defaultSubject="About your course progress" />
             </div>
           </td>
         </tr>

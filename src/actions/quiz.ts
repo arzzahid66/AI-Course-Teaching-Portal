@@ -9,6 +9,7 @@ import {
   QUIZ_REATTEMPT_GRANT,
 } from "@/lib/constants";
 import { notifyAdmin, notifyStudent } from "@/lib/pushNotifications";
+import { queueBroadcastEmail, queueStudentEmail } from "@/lib/email";
 import { getCurrentEnrollment } from "@/lib/course";
 
 /** Level of the student's current batch (null when not enrolled). */
@@ -694,6 +695,28 @@ export async function getQuizDetail(quizId: number): Promise<QuizDetail | null> 
   };
 }
 
+/** Tell the quiz's level (or everyone, when it has no level) that it is open. */
+function emailQuizPublished(q: {
+  title: string;
+  description: string | null;
+  level: number | null;
+  time_limit_sec: number;
+  pass_percent: number;
+}) {
+  queueBroadcastEmail(
+    { level: q.level },
+    {
+      subject: `New quiz: ${q.title}`,
+      heading: "A new quiz is open",
+      lines: [
+        `"${q.title}" is now available in the Quizzes section of the portal.`,
+        q.description,
+        `Time limit: ${Math.round(q.time_limit_sec / 60)} minutes · Pass mark: ${q.pass_percent}%`,
+      ],
+    }
+  );
+}
+
 /** Read + validate the shared quiz-settings fields from a submitted form. */
 function readQuizForm(formData: FormData): {
   title: string;
@@ -753,6 +776,15 @@ export async function createQuiz(formData: FormData): Promise<{ error?: string }
   } catch (e) {
     return { error: e instanceof Error ? `Could not create: ${e.message}` : "Could not create quiz." };
   }
+  if (f.isPublished && formData.get("notify_email") === "on") {
+    emailQuizPublished({
+      title: f.title,
+      description: f.description,
+      level: f.level,
+      time_limit_sec: f.timeLimitSec,
+      pass_percent: f.passPercent,
+    });
+  }
   revalidatePath("/admin");
   return {};
 }
@@ -762,6 +794,7 @@ export async function updateQuiz(id: number, formData: FormData): Promise<{ erro
   const f = readQuizForm(formData);
   if (f.error) return { error: f.error };
   try {
+    const before = (await sql`SELECT is_published FROM quizzes WHERE id = ${id}`) as { is_published: boolean }[];
     await sql`
       UPDATE quizzes
       SET title = ${f.title}, description = ${f.description}, level = ${f.level}, time_limit_sec = ${f.timeLimitSec},
@@ -770,6 +803,16 @@ export async function updateQuiz(id: number, formData: FormData): Promise<{ erro
           is_published = ${f.isPublished}, sort_order = ${f.sortOrder}
       WHERE id = ${id}
     `;
+    // Email only on the draft → published step, not on every settings save.
+    if (before[0] && !before[0].is_published && f.isPublished && formData.get("notify_email") === "on") {
+      emailQuizPublished({
+        title: f.title,
+        description: f.description,
+        level: f.level,
+        time_limit_sec: f.timeLimitSec,
+        pass_percent: f.passPercent,
+      });
+    }
   } catch (e) {
     return { error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save quiz." };
   }
@@ -777,10 +820,15 @@ export async function updateQuiz(id: number, formData: FormData): Promise<{ erro
   return {};
 }
 
-/** Toggle publish without opening the full editor. */
+/** Toggle publish without opening the full editor. Publishing a draft emails the students. */
 export async function setQuizPublished(id: number, published: boolean): Promise<void> {
   await assertAdmin();
-  await sql`UPDATE quizzes SET is_published = ${published} WHERE id = ${id}`;
+  const rows = (await sql`
+    UPDATE quizzes SET is_published = ${published}
+    WHERE id = ${id} AND is_published <> ${published}
+    RETURNING title, description, level, time_limit_sec, pass_percent
+  `) as { title: string; description: string | null; level: number | null; time_limit_sec: number; pass_percent: number }[];
+  if (published && rows[0]) emailQuizPublished(rows[0]);
   revalidatePath("/admin");
 }
 
@@ -939,6 +987,16 @@ export async function reviewQuizReattemptRequest(
               (feedback ? ` Note: ${feedback.slice(0, 80)}` : ""),
         url: "/portal",
       }).catch(() => {});
+      queueStudentEmail(r.student_id, {
+        subject: status === "approved" ? `Re-attempt approved: ${quizTitle}` : `Re-attempt declined: ${quizTitle}`,
+        heading: status === "approved" ? "Your re-attempt was approved" : "Your re-attempt request was declined",
+        lines: [
+          status === "approved"
+            ? `You can attempt "${quizTitle}" again from the Quizzes section of the portal.`
+            : `Your request to re-attempt "${quizTitle}" was declined.`,
+          feedback ? `Note from your tutor:\n${feedback}` : null,
+        ],
+      });
     }
   } catch (e) {
     return { error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save review." };
