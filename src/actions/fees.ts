@@ -14,6 +14,7 @@ import {
 } from "@/lib/course";
 import { notifyStudent } from "@/lib/pushNotifications";
 import { queueStudentEmail } from "@/lib/email";
+import { queueFeeWaivedEmail, queuePaymentReceiptEmail } from "@/lib/receiptEmail";
 
 const rsText = (n: number) => `Rs ${n.toLocaleString("en-PK")}`;
 
@@ -141,27 +142,7 @@ export async function recordPayment(formData: FormData): Promise<{ error?: strin
     paidAt: /^\d{4}-\d{2}-\d{2}$/.test(paidOn) ? paidOn : null,
   });
   if (res.error) return res;
-  if (res.receiptNo) {
-    const paid = (await sql`
-      SELECT p.student_id, array_agg(i.month_no ORDER BY i.month_no) AS months
-      FROM payments p JOIN fee_invoices i ON i.id = p.invoice_id
-      WHERE p.receipt_no = ${res.receiptNo}
-      GROUP BY p.student_id
-    `) as { student_id: number; months: number[] }[];
-    if (paid[0]) {
-      const months = paid[0].months.map(Number);
-      queueStudentEmail(paid[0].student_id, {
-        subject: `Payment received — receipt ${res.receiptNo}`,
-        heading: "Payment received, thank you",
-        lines: [
-          `We received ${rsText(amount)} by ${method}.`,
-          `Receipt no: ${res.receiptNo}\nFor month${months.length > 1 ? "s" : ""}: ${months.join(", ")}` +
-            (reference ? `\nTransaction ID: ${reference}` : ""),
-          "Your fee details are always up to date in the Fees section of the portal.",
-        ],
-      });
-    }
-  }
+  if (res.receiptNo) await queuePaymentReceiptEmail(res.receiptNo);
   revalidatePath("/admin");
   revalidatePath("/portal");
   return res;
@@ -197,10 +178,16 @@ export async function updateInvoice(id: number, formData: FormData): Promise<{ e
   if (Number.isNaN(discount) || discount < 0 || discount > amount) {
     return { error: "Discount must be between 0 and the amount." };
   }
-  const paid = (await sql`
-    SELECT COALESCE(SUM(amount), 0) AS paid FROM payments WHERE invoice_id = ${id}
-  `) as { paid: string }[];
-  if (Number(paid[0]?.paid ?? 0) > amount - discount) {
+  const before = (await sql`
+    SELECT i.enrollment_id, i.month_no, i.amount, i.discount, e.student_id,
+      COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id), 0) AS paid
+    FROM fee_invoices i JOIN enrollments e ON e.id = i.enrollment_id
+    WHERE i.id = ${id}
+  `) as { enrollment_id: number; month_no: number; amount: number; discount: number; student_id: number; paid: string }[];
+  const row = before[0];
+  if (!row) return { error: "Fee month not found." };
+  const paidSoFar = Number(row.paid);
+  if (paidSoFar > amount - discount) {
     return { error: "More than that has already been paid. Delete a receipt first." };
   }
   await sql`
@@ -208,6 +195,13 @@ export async function updateInvoice(id: number, formData: FormData): Promise<{ e
     SET due_date = ${dueDate}, amount = ${amount}, discount = ${discount}, note = ${note || null}
     WHERE id = ${id}
   `;
+  // A discount or waiver can clear a month with no money changing hands — the
+  // student just sees "Paid", so tell them why.
+  const clearedBefore = paidSoFar >= row.amount - row.discount;
+  const clearedNow = paidSoFar >= amount - discount;
+  if (clearedNow && !clearedBefore && discount > 0) {
+    await queueFeeWaivedEmail(row.student_id, row.month_no, discount);
+  }
   revalidatePath("/admin");
   revalidatePath("/portal");
   return {};

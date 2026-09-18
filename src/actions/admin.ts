@@ -34,6 +34,7 @@ import {
   sendStudentEmailNow,
 } from "@/lib/email";
 import { queueWelcomeEmail, sendWelcomeEmailNow } from "@/lib/welcomeEmail";
+import { queuePaymentReceiptEmail } from "@/lib/receiptEmail";
 
 // ---------------------------------------------------------------------------
 // Auth
@@ -197,6 +198,7 @@ export async function addStudent(formData: FormData): Promise<{ error?: string; 
       });
       if (res.error) return { error: `Student added, but payment failed: ${res.error}` };
       receiptNo = res.receiptNo;
+      if (receiptNo) await queuePaymentReceiptEmail(receiptNo);
     }
   }
   if (email && password && formData.get("send_welcome") === "on") queueWelcomeEmail(created.id);
@@ -248,7 +250,7 @@ export async function bulkAddStudents(
       const due = invoices.reduce((s, i) => s + i.remaining, 0);
       const amount = paid === "full" ? due : Number(paid);
       if (amount > 0 && !Number.isNaN(amount)) {
-        await insertPayment({
+        const payRes = await insertPayment({
           enrollmentId,
           amount: Math.min(amount, due),
           target: "auto",
@@ -257,6 +259,7 @@ export async function bulkAddStudents(
           note: "Recorded in bulk import",
           paidAt: null,
         });
+        if (payRes.receiptNo) await queuePaymentReceiptEmail(payRes.receiptNo);
       }
     }
     if (email && parts[4] && formData.get("send_welcome") === "on") queueWelcomeEmail(res.id);
