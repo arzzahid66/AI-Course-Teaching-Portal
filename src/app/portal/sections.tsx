@@ -217,16 +217,6 @@ export function FeeBlockedCard({
 export function WeekChecklist({ data, onOpen }: { data: PortalData; onOpen: (tab: "videos" | "homework") => void }) {
   const week = data.weekends.find((w) => w.is_current) ?? null;
   if (!week) return null;
-  if (!week.is_open) {
-    const opens = week.class_at ? new Date(new Date(week.class_at).getTime() - 7 * 24 * 60 * 60 * 1000).toISOString() : null;
-    return (
-      <Card>
-        <p className="text-xs font-semibold text-brand-600 uppercase tracking-wide">Next up · Weekend {week.weekend_no}</p>
-        <h2 className="font-bold">{week.title}</h2>
-        <p className="text-sm text-slate-500 mt-1">Videos and homework open {fmtWhen(opens)}.</p>
-      </Card>
-    );
-  }
   const main = week.videos.filter((v) => v.kind !== "extra");
   const sub = week.submission;
   const hwDone = sub && sub.status !== "needs_changes";
@@ -355,18 +345,29 @@ function WeekendCard({ w }: { w: PortalWeekend }) {
               <b>Homework:</b> {w.homework}
             </p>
           )}
-          {w.slides.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-2">
-              {w.slides.map((s) => (
-                <a key={s.url} href={s.url} target="_blank" rel="noreferrer" className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1">
-                  📎 {s.label || "Slides"}
-                </a>
-              ))}
-            </div>
-          )}
+          {w.slides.length > 0 && <SlideLinks slides={w.slides} />}
         </div>
       )}
     </section>
+  );
+}
+
+/** Slides and extra links for a weekend — always available, like a library. */
+function SlideLinks({ slides }: { slides: PortalWeekend["slides"] }) {
+  return (
+    <div className="mt-2 flex flex-wrap gap-2">
+      {slides.map((s) => (
+        <a
+          key={s.url}
+          href={s.url}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs rounded-lg border border-brand-200 text-brand-700 px-2 py-1"
+        >
+          📎 {s.label || "Slides"}
+        </a>
+      ))}
+    </div>
   );
 }
 
@@ -375,15 +376,16 @@ function WeekendCard({ w }: { w: PortalWeekend }) {
 // ---------------------------------------------------------------------------
 export function VideosTab({ data }: { data: PortalData }) {
   if (!data.enrollment) return <NotEnrolledCard />;
-  const open = data.weekends.filter((w) => w.is_open);
-  const current = open.find((w) => w.is_current);
-  const ordered = [...(current ? [current] : []), ...open.filter((w) => w !== current).reverse()];
+  // The whole course library: every weekend's videos, available from day one.
+  const withVideos = data.weekends.filter((w) => w.videos.length > 0);
+  const current = withVideos.find((w) => w.is_current);
+  const ordered = [...(current ? [current] : []), ...withVideos.filter((w) => w !== current)];
 
   if (ordered.length === 0) {
     return (
       <Card>
         <p className="text-slate-600 text-center">
-          Videos open a week before each class. The first ones appear 7 days before your first Sunday.
+          Your tutor hasn&apos;t added any videos yet. They appear here as soon as they do.
         </p>
       </Card>
     );
@@ -394,18 +396,16 @@ export function VideosTab({ data }: { data: PortalData }) {
         <Card key={w.id}>
           <p className="text-xs text-slate-400 font-medium">
             Weekend {w.weekend_no}
+            {w.class_at && ` · class ${fmtWhen(w.class_at)}`}
             {w.is_current && <span className="text-brand-600"> · this week</span>}
           </p>
           <h2 className="font-bold mb-2">{w.title}</h2>
-          {w.videos.length === 0 ? (
-            <p className="text-slate-400 text-sm">Videos for this weekend are coming soon.</p>
-          ) : (
-            <ul className="divide-y">
-              {w.videos.map((v) => (
-                <VideoRow key={v.id} video={v} />
-              ))}
-            </ul>
-          )}
+          <ul className="divide-y">
+            {w.videos.map((v) => (
+              <VideoRow key={v.id} video={v} />
+            ))}
+          </ul>
+          {w.slides.length > 0 && <SlideLinks slides={w.slides} />}
         </Card>
       ))}
     </>
@@ -468,16 +468,16 @@ function VideoRow({ video }: { video: PortalWeekend["videos"][number] }) {
 // ---------------------------------------------------------------------------
 export function HomeworkTab({ data }: { data: PortalData }) {
   if (!data.enrollment) return <NotEnrolledCard />;
-  const withHomework = data.weekends.filter((w) => w.is_open && w.homework);
+  const withHomework = data.weekends.filter((w) => w.homework);
   if (withHomework.length === 0) {
     return (
       <Card>
-        <p className="text-slate-600 text-center">No homework yet. It opens with each weekend&apos;s videos.</p>
+        <p className="text-slate-600 text-center">Your tutor hasn&apos;t added any homework yet.</p>
       </Card>
     );
   }
   const current = withHomework.find((w) => w.is_current);
-  const ordered = [...(current ? [current] : []), ...withHomework.filter((w) => w !== current).reverse()];
+  const ordered = [...(current ? [current] : []), ...withHomework.filter((w) => w !== current)];
   return (
     <>
       {ordered.map((w) => (

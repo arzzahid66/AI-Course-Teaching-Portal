@@ -95,7 +95,11 @@ export type PortalWeekend = {
   slides: ResourceLink[];
   /** This intake's class for the weekend (null if none scheduled). */
   class_at: string | null;
-  /** Content (videos, homework) unlocks 7 days before the class. */
+  /**
+   * True once the weekend has begun (from 7 days before its class). Videos,
+   * slides and homework are always readable — this only drives "this week"
+   * labels and the homework reminder badge.
+   */
   is_open: boolean;
   is_current: boolean;
   homework_due_at: string | null;
@@ -334,7 +338,7 @@ export async function getPortalData(): Promise<PortalData> {
       topics: (w.topics ?? "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean),
       you_build: w.you_build,
       homework: w.homework,
-      slides: isOpen ? parseResourceLinks(w.slides) : [],
+      slides: parseResourceLinks(w.slides),
       class_at: t != null ? new Date(t).toISOString() : null,
       is_open: isOpen,
       is_current: w.id === currentId,
@@ -342,7 +346,7 @@ export async function getPortalData(): Promise<PortalData> {
       videos: w.videos.map((v) => ({
         id: v.id,
         title: v.title,
-        url: isOpen ? v.url : "",
+        url: v.url,
         kind: v.kind,
         watched: watched.has(v.id),
       })),
