@@ -438,7 +438,7 @@ export async function submitQuizAttempt(
 
   const attemptRows = (await sql`
     SELECT a.id, a.quiz_id, a.status, a.score, a.total, a.percent, a.passed,
-           a.question_ids, q.pass_percent
+           a.question_ids, q.pass_percent, q.title
     FROM quiz_attempts a
     JOIN quizzes q ON q.id = a.quiz_id
     WHERE a.id = ${attemptId} AND a.student_id = ${studentId}
@@ -453,6 +453,7 @@ export async function submitQuizAttempt(
     passed: boolean | null;
     question_ids: number[] | null;
     pass_percent: number;
+    title: string;
   }[];
   const attempt = attemptRows[0];
   if (!attempt) return { ok: false, error: "Attempt not found." };
@@ -553,6 +554,33 @@ export async function submitQuizAttempt(
   } catch {
     return { ok: false, error: "Could not save your attempt. Please try again." };
   }
+
+  // Result email — sent once, only on the attempt that actually finalizes it,
+  // so a re-submit of an already-scored attempt never emails twice.
+  queueStudentEmail(studentId, {
+    subject: `Your quiz result: ${attempt.title} — ${percent}%`,
+    heading: passed ? "You passed 🎉" : "Your quiz result",
+    lines: [
+      `You scored ${score} out of ${total} (${percent}%) in "${attempt.title}".`,
+      passed
+        ? `That is above the pass mark of ${attempt.pass_percent}%. Well done!`
+        : `The pass mark is ${attempt.pass_percent}%. Don't worry — open the portal to see which answers were wrong and what the right ones were.`,
+      "Open the Quiz section of the portal to go through every question with the correct answers.",
+    ],
+    sections: [
+      {
+        title: "Your result",
+        lines: [
+          `Quiz: ${attempt.title}`,
+          `Score: ${score} / ${total}`,
+          `Percentage: ${percent}%`,
+          `Pass mark: ${attempt.pass_percent}%`,
+          `Result: ${passed ? "Passed" : "Not passed"}`,
+        ],
+        tone: passed ? "success" : "warning",
+      },
+    ],
+  });
 
   return { ok: true, score, total, percent, passed, passPercent: Number(attempt.pass_percent), review };
 }
