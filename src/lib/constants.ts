@@ -99,41 +99,42 @@ export const DEFAULT_GRACE_DAYS = 7;
 export const DEFAULT_CLASS_TIME = "10:00";
 
 // ---------------------------------------------------------------------------
-// Tutor profile — shown to every student in an "About your teacher" card on the
-// Class tab. Edit these freely.
+// Instructors — shown to every student in the "About the instructors" card,
+// opened from the Teachers button in the portal header. Add, remove or reorder
+// freely; the card shows each person's initials, so no photos are needed.
 // ---------------------------------------------------------------------------
 
-/** Tutor's display name. */
-export const TUTOR_NAME = "Abdul Rehman Zahid";
+export type Instructor = {
+  /** Full name, shown in bold and used for the initials circle. */
+  name: string;
+  /** Role and where they work, e.g. "AI Engineer at Xeven Solutions". */
+  role: string;
+  /** A sentence or two for students. Keep it simple and jargon-free. */
+  bio: string;
+  /** Full https:// link to their LinkedIn profile. "" hides the button. */
+  linkedin: string;
+};
 
-/** Short title / role shown under the name. */
-export const TUTOR_TITLE = "AI Engineer";
-
-/** Company the tutor works at (shown under the title). */
-export const TUTOR_COMPANY = "Xeven Solutions";
-
-/** City, Country. */
-export const TUTOR_LOCATION = "Faisalabad, Pakistan";
-
-/**
- * Photo of the tutor, served from the `public/` folder. Drop your image at
- * `public/tutor.jpg` (or change this path). Set to "" to show initials instead.
- */
-export const TUTOR_PHOTO = "/tutor.jpg";
-
-/**
- * Short bio shown to every student. Written for non-technical learners (kids
- * and seniors) — keep it warm, simple, and jargon-free.
- */
-export const TUTOR_BIO =
-  "Hi, I'm Abdul Rehman — your teacher. 👋 I work as an AI Engineer at " +
-  "Xeven Solutions, an international software company. For more than 3 years " +
-  "I've built smart computer helpers (this is what people call \"AI\") that big " +
-  "companies use every day to get their work done faster and easier. My " +
-  "favourite thing is taking something that sounds hard and making it simple " +
-  "and fun. You do NOT need any background — young or old, beginner or curious, " +
-  "I'll guide you step by step. Together we'll build real, useful things you'll " +
-  "be proud to show your family. Let's learn by doing! ✨";
+export const INSTRUCTORS: Instructor[] = [
+  {
+    name: "Abdul Rehman Zahid",
+    role: "AI Engineer at Xeven Solutions",
+    bio: "3 years of experience building real-world AI applications.",
+    linkedin: "https://www.linkedin.com/in/abdul-rehman-zahid-5a34b628a/",
+  },
+  {
+    name: "Muhammad Faizan Mumtaz",
+    role: "AI Engineer at Xeven Solutions",
+    bio: "2 years of experience building production AI systems and automations.",
+    linkedin: "https://www.linkedin.com/in/muhammad-faizan-mumtaz/",
+  },
+  {
+    name: "Bushra Akram",
+    role: "AI Educator & Technical Content Creator at Philadelphia Training and Technician Institute, USA",
+    bio: "She teaches AI, Prompt Engineering, Python, and n8n, with a special focus on AI for Kids.",
+    linkedin: "https://www.linkedin.com/in/bushra-akram-3ba49a279/",
+  },
+];
 
 /** Name of the httpOnly admin session cookie. */
 export const ADMIN_COOKIE = "classgate_admin";

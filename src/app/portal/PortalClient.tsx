@@ -21,15 +21,7 @@ import {
 import { studentLogout } from "@/actions/studentAuth";
 import { saveStudentSubscription } from "@/actions/push";
 import { usePushSubscription } from "@/lib/usePushSubscription";
-import {
-  COURSE_NAME,
-  TUTOR_NAME,
-  TUTOR_TITLE,
-  TUTOR_COMPANY,
-  TUTOR_LOCATION,
-  TUTOR_PHOTO,
-  TUTOR_BIO,
-} from "@/lib/constants";
+import { COURSE_NAME, INSTRUCTORS, type Instructor } from "@/lib/constants";
 import {
   Card,
   CourseTab,
@@ -110,7 +102,7 @@ export default function PortalClient({ data }: { data: PortalData }) {
             onClick={() => setShowBio(true)}
             className="flex items-center gap-1.5 rounded-full bg-brand-50 text-brand-700 text-sm font-semibold px-3 py-1.5 active:scale-[0.97] transition"
           >
-            👤 Teacher
+            👤 Teachers
           </button>
           <button onClick={() => studentLogout()} className="text-sm text-slate-500 underline">
             Log out
@@ -159,7 +151,7 @@ export default function PortalClient({ data }: { data: PortalData }) {
 }
 
 // ---------------------------------------------------------------------------
-// About your teacher — opened from the "About Teacher" button in the header
+// About the instructors — opened from the Teachers button in the header
 // ---------------------------------------------------------------------------
 function TutorBioModal({ onClose }: { onClose: () => void }) {
   // Close on Escape key for convenience.
@@ -194,61 +186,53 @@ function TutorBioModal({ onClose }: { onClose: () => void }) {
 }
 
 function TutorBioCard() {
-  const [imgFailed, setImgFailed] = useState(false);
-  const initials = TUTOR_NAME.split(" ")
+  return (
+    <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+      <div className="bg-gradient-to-br from-brand-600 to-brand-700 px-5 py-5">
+        <p className="text-xs font-semibold uppercase tracking-wide text-white/80">
+          👤 About the instructors
+        </p>
+        <h2 className="text-lg font-bold text-white mt-0.5">Who teaches you</h2>
+      </div>
+
+      <ul className="divide-y divide-slate-100">
+        {INSTRUCTORS.map((person) => (
+          <InstructorRow key={person.name} person={person} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function InstructorRow({ person }: { person: Instructor }) {
+  const initials = person.name
+    .split(" ")
     .slice(0, 2)
     .map((w) => w[0])
     .join("")
     .toUpperCase();
 
-  const showPhoto = TUTOR_PHOTO && !imgFailed;
-
   return (
-    <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
-      {/* Slim brand accent header so the photo pops without drowning the text */}
-      <div className="bg-gradient-to-br from-brand-600 to-brand-700 px-5 pt-5 pb-12">
-        <p className="text-xs font-semibold uppercase tracking-wide text-white/80">
-          👤 Your teacher
-        </p>
+    <li className="flex gap-3 px-5 py-4">
+      <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-brand-100 text-base font-bold text-brand-700">
+        {initials}
       </div>
-
-      <div className="px-5 pb-5">
-        <div className="-mt-9 flex items-end gap-4">
-          {showPhoto ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={TUTOR_PHOTO}
-              alt={TUTOR_NAME}
-              onError={() => setImgFailed(true)}
-              className="h-20 w-20 shrink-0 rounded-2xl object-cover ring-4 ring-white shadow-md"
-            />
-          ) : (
-            <div className="grid h-20 w-20 shrink-0 place-items-center rounded-2xl bg-brand-100 text-2xl font-bold text-brand-700 ring-4 ring-white shadow-md">
-              {initials}
-            </div>
-          )}
-          <div className="min-w-0 pb-1">
-            <h2 className="text-lg font-bold leading-tight text-slate-900">
-              {TUTOR_NAME}
-            </h2>
-            <p className="text-sm text-slate-600">
-              {TUTOR_TITLE}
-              {TUTOR_COMPANY && (
-                <>
-                  {" "}
-                  <span className="text-slate-400">at</span>{" "}
-                  <span className="font-semibold text-brand-700">{TUTOR_COMPANY}</span>
-                </>
-              )}
-            </p>
-          </div>
-        </div>
-
-        <p className="mt-2 text-xs text-slate-400">📍 {TUTOR_LOCATION}</p>
-
-        <p className="mt-4 text-sm leading-relaxed text-slate-700">{TUTOR_BIO}</p>
+      <div className="min-w-0 flex-1">
+        <h3 className="font-bold leading-tight text-slate-900">{person.name}</h3>
+        <p className="text-xs text-brand-700 font-medium mt-0.5">{person.role}</p>
+        <p className="mt-1.5 text-sm leading-relaxed text-slate-700">{person.bio}</p>
+        {person.linkedin && (
+          <a
+            href={person.linkedin}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-brand-200 px-2.5 py-1 text-xs font-semibold text-brand-700 active:scale-[0.97] transition"
+          >
+            in · LinkedIn profile
+          </a>
+        )}
       </div>
-    </section>
+    </li>
   );
 }
 
