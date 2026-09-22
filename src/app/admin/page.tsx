@@ -8,7 +8,8 @@ import {
   getLoginLogs,
 } from "@/actions/admin";
 import { getBatches, getBatchOverview } from "@/actions/batches";
-import { getFeeBoard, getPaymentSettings } from "@/actions/fees";
+import { getFeeBoard, getPaymentSettings, getPrivacyMode } from "@/actions/fees";
+import { getResourceBoard } from "@/actions/resources";
 import { getCurriculumAdmin, getHomeworkBoard } from "@/actions/curriculum";
 import {
   getQuizzesAdmin,
@@ -77,6 +78,8 @@ export default async function AdminPage({
     quizScoreboard,
     quizLeaderboard,
     loginLogs,
+    resourceBoard,
+    privacy,
   ] = await Promise.all([
     selected ? settle(loadBatchData(selected.id, batches), null) : Promise.resolve(null),
     settle(getStudents(), []),
@@ -90,6 +93,8 @@ export default async function AdminPage({
     settle(getQuizScoreboard(), { quizzes: [], students: [], scores: {} }),
     settle(getQuizLeaderboard(), { quizzes: [], byQuiz: {} }),
     settle(getLoginLogs(), []),
+    settle(getResourceBoard(), { resources: [], requests: [], codeRequests: [] }),
+    settle(getPrivacyMode(), false),
   ]);
 
   return (
@@ -109,6 +114,8 @@ export default async function AdminPage({
       quizScoreboard={quizScoreboard}
       quizLeaderboard={quizLeaderboard}
       loginLogs={loginLogs}
+      resourceBoard={resourceBoard}
+      privacy={privacy}
     />
   );
 }

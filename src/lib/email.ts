@@ -263,3 +263,19 @@ export function fmtClassTime(d: Date | string): string {
     hour12: true,
   }).format(new Date(d));
 }
+
+/**
+ * Email the tutor, not a student. Used for things only the tutor can act on -
+ * e.g. "this slot ended, go revoke the Claude session". Falls back through
+ * ADMIN_EMAIL -> EMAIL_REPLY_TO -> SMTP_USER so it works with the settings
+ * most installs already have.
+ */
+export async function sendAdminEmail(msg: EmailMessage): Promise<{ error?: string }> {
+  const to =
+    process.env.ADMIN_EMAIL ||
+    process.env.EMAIL_REPLY_TO ||
+    process.env.SMTP_USER ||
+    "";
+  if (!to.trim()) return { error: "No ADMIN_EMAIL / EMAIL_REPLY_TO / SMTP_USER is set." };
+  return deliver({ id: 0, name: "Tutor", email: to.trim() }, msg);
+}

@@ -49,7 +49,8 @@ import {
   type QuizResultRow,
 } from "@/actions/quiz";
 import type { DashboardStats } from "@/actions/batches";
-import type { FeeBoard } from "@/actions/fees";
+import { setPrivacyMode, type FeeBoard } from "@/actions/fees";
+import type { ResourceBoard } from "@/lib/resources";
 import type { HomeworkBoard } from "@/actions/curriculum";
 import type { BatchRow, PaymentAccount, ProgressRow } from "@/lib/course";
 import type { Curriculum } from "@/lib/curriculum";
@@ -59,7 +60,7 @@ import {
   QUIZ_DEFAULT_MAX_ATTEMPTS,
   COURSE_NAME,
 } from "@/lib/constants";
-import { Card, EmailStudentButton, fieldClass, fmt, genderBucket, GENDER_META } from "./ui";
+import { Card, EmailStudentButton, PrivacyProvider, fieldClass, fmt, genderBucket, GENDER_META } from "./ui";
 import DashboardTab from "./tabs/DashboardTab";
 import IntakesTab from "./tabs/IntakesTab";
 import StudentsTab from "./tabs/StudentsTab";
@@ -68,6 +69,7 @@ import FeesTab from "./tabs/FeesTab";
 import CurriculumTab from "./tabs/CurriculumTab";
 import HomeworkTab from "./tabs/HomeworkTab";
 import ProgressTab from "./tabs/ProgressTab";
+import ResourcesTab from "./tabs/ResourcesTab";
 
 type Tab =
   | "dashboard"
@@ -79,6 +81,7 @@ type Tab =
   | "homework"
   | "progress"
   | "quiz"
+  | "tools"
   | "questions"
   | "leave"
   | "logs";
@@ -109,6 +112,8 @@ export default function AdminDashboard({
   quizScoreboard,
   quizLeaderboard,
   loginLogs,
+  resourceBoard,
+  privacy: initialPrivacy,
 }: {
   batches: BatchRow[];
   batchData: BatchData | null;
@@ -125,16 +130,41 @@ export default function AdminDashboard({
   quizScoreboard: QuizScoreboard;
   quizLeaderboard: QuizLeaderboard;
   loginLogs: LoginLogRow[];
+  resourceBoard: ResourceBoard;
+  privacy: boolean;
 }) {
   const [tab, setTab] = useState<Tab>(batchData ? "dashboard" : "intakes");
+  // Privacy Mode is flipped optimistically so the screen masks on the very next
+  // render — no waiting for a round trip in the middle of a screen recording.
+  const [privacy, setPrivacy] = useState(initialPrivacy);
   const router = useRouter();
   const saveSub = useCallback(saveAdminSubscription, []);
   usePushSubscription(saveSub);
+
+  const [, startPrivacy] = useTransition();
+
+  /**
+   * Mask/unmask immediately, then persist. If the write fails we put the
+   * switch back so the button never lies about what the database holds.
+   */
+  function togglePrivacy() {
+    const next = !privacy;
+    setPrivacy(next);
+    startPrivacy(async () => {
+      const res = await setPrivacyMode(next);
+      if (res?.error) setPrivacy(!next);
+    });
+  }
 
   const batch = batchData?.batch ?? null;
   const openQuestions = questions.filter((q) => q.status === "open").length;
   const pendingLeaves = leaves.filter((l) => l.status === "pending").length;
   const pendingQuizReqs = quizRequests.filter((r) => r.status === "pending").length;
+  // A student sitting on the claude.ai code screen is the most urgent thing
+  // here, so code requests count toward the badge alongside new bookings.
+  const toolsWaiting =
+    resourceBoard.codeRequests.length +
+    resourceBoard.requests.filter((r) => r.status === "pending").length;
   const toMark =
     batchData?.homework.submissions.filter((s) => s.status === "submitted" && s.marks == null).length ?? 0;
 
@@ -148,6 +178,7 @@ export default function AdminDashboard({
     ["homework", "Homework", toMark],
     ["progress", "Progress", 0],
     ["quiz", "Quiz", pendingQuizReqs],
+    ["tools", "Tools", toolsWaiting],
     ["questions", "Questions", openQuestions],
     ["leave", "Leave", pendingLeaves],
     ["logs", "Logs", 0],
@@ -180,6 +211,22 @@ export default function AdminDashboard({
             </select>
           </label>
           <button
+            onClick={togglePrivacy}
+            aria-pressed={privacy}
+            title={
+              privacy
+                ? "Fee amounts are hidden. Click to show them again."
+                : "Hide every fee amount before you record the screen."
+            }
+            className={`rounded-full px-3 py-1.5 text-sm font-semibold whitespace-nowrap transition ${
+              privacy
+                ? "bg-amber-100 text-amber-800 ring-1 ring-amber-300"
+                : "text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            {privacy ? "🙈 Fees hidden" : "👁 Fees visible"}
+          </button>
+          <button
             onClick={() => adminLogout().then(() => router.refresh())}
             className="text-sm text-slate-500 underline"
           >
@@ -207,6 +254,7 @@ export default function AdminDashboard({
         ))}
       </nav>
 
+      <PrivacyProvider value={privacy}>
       {needsBatch.includes(tab) && !batchData ? (
         <Card>
           <p className="text-slate-600">
@@ -248,11 +296,13 @@ export default function AdminDashboard({
               leaderboard={quizLeaderboard}
             />
           )}
+          {tab === "tools" && <ResourcesTab board={resourceBoard} />}
           {tab === "questions" && <QuestionsTab questions={questions} />}
           {tab === "leave" && <LeaveTab leaves={leaves} />}
           {tab === "logs" && <LogsTab logs={loginLogs} />}
         </>
       )}
+      </PrivacyProvider>
     </main>
   );
 }

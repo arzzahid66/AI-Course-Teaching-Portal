@@ -29,8 +29,10 @@ import {
   fieldClass,
   fmt,
   fmtDay,
-  rs,
   useAction,
+  useAmountInputType,
+  usePrivacy,
+  useRs,
 } from "../ui";
 
 export default function FeesTab({
@@ -44,6 +46,8 @@ export default function FeesTab({
   accounts: PaymentAccount[];
   whatsapp: string;
 }) {
+  const rs = useRs();
+  const privacy = usePrivacy();
   const reminders = useAction();
   const [paying, setPaying] = useState<FeeBoardRow | null>(null);
   const [editingInvoice, setEditingInvoice] = useState<{ row: FeeBoardRow; invoice: InvoiceView } | null>(null);
@@ -105,7 +109,12 @@ export default function FeesTab({
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
           <h2 className="font-bold">Fees — {batch.name}</h2>
           <div className="flex flex-wrap gap-1.5">
-            <button onClick={exportGrid} className={btn.small}>
+            <button
+              onClick={exportGrid}
+              disabled={privacy}
+              title={privacy ? "Turn off privacy mode to export" : undefined}
+              className={btn.small}
+            >
               Export grid CSV
             </button>
             <button
@@ -206,7 +215,12 @@ export default function FeesTab({
       <Card>
         <div className="flex items-center justify-between gap-2 mb-3">
           <h2 className="font-bold">Payment history</h2>
-          <button onClick={exportPayments} disabled={board.payments.length === 0} className={btn.small}>
+          <button
+            onClick={exportPayments}
+            disabled={privacy || board.payments.length === 0}
+            title={privacy ? "Turn off privacy mode to export" : undefined}
+            className={btn.small}
+          >
             Export CSV
           </button>
         </div>
@@ -241,6 +255,7 @@ export default function FeesTab({
 }
 
 function PaymentItem({ p }: { p: FeeBoard["payments"][number] }) {
+  const rs = useRs();
   const del = useAction();
   return (
     <li className="py-2 flex items-start justify-between gap-2">
@@ -271,6 +286,8 @@ function PaymentItem({ p }: { p: FeeBoard["payments"][number] }) {
 }
 
 function RecordPaymentModal({ row, onClose }: { row: FeeBoardRow; onClose: () => void }) {
+  const rs = useRs();
+  const amountType = useAmountInputType();
   const pay = useAction();
   const unpaid = row.invoices.filter((i) => i.remaining > 0);
   const [target, setTarget] = useState<string>(unpaid.length === 1 ? String(unpaid[0].month_no) : "auto");
@@ -327,7 +344,7 @@ function RecordPaymentModal({ row, onClose }: { row: FeeBoardRow; onClose: () =>
               <span className="block text-xs font-medium text-slate-500 mb-1">Amount (Rs)</span>
               <input
                 name="amount"
-                type="number"
+                type={amountType}
                 min={1}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
@@ -379,6 +396,8 @@ function InvoiceModal({
   payments: FeePaymentRow[];
   onClose: () => void;
 }) {
+  const rs = useRs();
+  const amountType = useAmountInputType();
   const save = useAction();
   return (
     <Modal title={`${name} — Month ${invoice.month_no}`} onClose={onClose}>
@@ -407,11 +426,11 @@ function InvoiceModal({
           </label>
           <label>
             <span className="block text-xs font-medium text-slate-500 mb-1">Amount</span>
-            <input name="amount" type="number" min={0} defaultValue={invoice.amount} className={fieldClass()} />
+            <input name="amount" type={amountType} min={0} defaultValue={invoice.amount} className={fieldClass()} />
           </label>
           <label>
             <span className="block text-xs font-medium text-slate-500 mb-1">Discount</span>
-            <input name="discount" type="number" min={0} defaultValue={invoice.discount} className={fieldClass()} />
+            <input name="discount" type={amountType} min={0} defaultValue={invoice.discount} className={fieldClass()} />
           </label>
         </div>
         <input name="note" defaultValue={invoice.note ?? ""} placeholder="Note, e.g. sibling discount" className={fieldClass()} />
@@ -426,6 +445,7 @@ function InvoiceModal({
 }
 
 function PaymentRowItem({ p, studentName }: { p: FeePaymentRow; studentName: string }) {
+  const rs = useRs();
   const del = useAction();
   return (
     <li className="py-2">
@@ -465,6 +485,7 @@ function ReceiptsModal({
   payments: FeePaymentRow[];
   onClose: () => void;
 }) {
+  const rs = useRs();
   return (
     <Modal title={`${row.name} — payments`} onClose={onClose}>
       <p className="text-sm text-slate-600 mb-3">

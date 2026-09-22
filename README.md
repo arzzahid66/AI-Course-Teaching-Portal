@@ -40,8 +40,8 @@ always re-checked on the server.
 |---|---|---|
 | `/` | Everyone | Landing page with login links |
 | `/login` | Students | Email + password login |
-| `/portal` | Students | Class, Course, Videos, Homework, Progress, Fees, Quiz, Leave, Ask |
-| `/admin?batch=<id>` | Tutor | Dashboard, Intakes, Students, Classes, Fees, Curriculum, Homework, Progress, Quiz, Questions, Leave, Logs — scoped to the intake picked in the header |
+| `/portal` | Students | Class, Course, Videos, Homework, Progress, Fees, Quiz, **Tools**, Leave, Ask |
+| `/admin?batch=<id>` | Tutor | Dashboard, Intakes, Students, Classes, Fees, Curriculum, Homework, Progress, Quiz, **Tools**, Questions, Leave, Logs — scoped to the intake picked in the header |
 
 **Payment details** (EasyPaisa / JazzCash / bank accounts and the WhatsApp number for
 screenshots) are stored in the database and edited in **Admin → Fees → Payment accounts**.
@@ -65,7 +65,7 @@ npm install
 npm run dev
 ```
 
-`.env` needs `DATABASE_URL` and `ADMIN_PASSWORD` (optional: `ADMIN_EMAIL`,
+`.env` needs `DATABASE_URL` and `ADMIN_PASSWORD` (optional: `ADMIN_EMAIL`, `CRON_SECRET`,
 `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_EMAIL` for push notifications).
 
 Student emails (optional) need `EMAIL_ENABLED=true`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
@@ -79,7 +79,18 @@ Open <http://localhost:3000>; admin is at `/admin`, students at `/login`.
 ## Database
 
 [`migration.sql`](migration.sql) is a **clean install** of the full schema plus seed data
-(2 levels, 16 weekends, one payment account).
+(2 levels, 16 weekends, one payment account, 2 shared tools).
+
+Once there is live data, **never** use it to add tables - it drops everything first. Additive
+changes go in [`migrations/`](migrations/) and are applied with a runner that only ever adds:
+
+```bash
+node --env-file=.env scripts/apply-migration.mjs migrations/001_shared_resources.sql
+```
+
+Each migration is idempotent and runs in one transaction, so re-running it is harmless and a
+failure leaves the database untouched. New tables are also appended to `migration.sql` so a
+clean install stays in sync.
 
 ```bash
 # Back up every table to backups/<timestamp>/*.json (nothing is deleted)
@@ -114,7 +125,17 @@ node --env-file=.env scripts/reset-db.mjs --confirm
 5. **Fees** → record payments when a screenshot arrives; tap a month to change its due date
    or give a discount; export CSV; send reminders.
 6. **Homework** → mark submissions out of 10 with feedback.
-7. **Progress** → see everyone ranked by score; export CSV.
+7. **Tools** → approve who gets the shared Claude Code plan / OpenAI key, and relay Claude
+   sign-in codes while a student's slot is running.
+8. **Progress** → see everyone ranked by score; export CSV.
+
+### Recording the screen
+
+Before you record the admin dashboard, press **👁 Fees visible** in the header. It flips to
+**🙈 Fees hidden** and every rupee amount across Dashboard, Fees, Students and Intakes
+becomes `Rs •••••`, the blocked-students list is hidden and CSV export is disabled. The setting
+lives in `app_settings.privacy_mode` and never affects `/portal` - a student always sees their
+own fee.
 
 ## Stop students from sharing the Meet link 🔒
 

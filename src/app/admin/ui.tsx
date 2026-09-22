@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { sendStudentEmail } from "@/actions/admin";
+import { MASKED_AMOUNT } from "@/lib/constants";
 
 // ---------------------------------------------------------------------------
 // Shared admin UI primitives
@@ -60,6 +61,49 @@ export function fmtDay(ymd: string | null): string {
 
 export function rs(n: number): string {
   return `Rs ${Math.round(n).toLocaleString("en-PK")}`;
+}
+
+// ---------------------------------------------------------------------------
+// Privacy Mode
+//
+// The tutor screen-records the admin dashboard for lesson videos, so every
+// rupee amount has to be hideable with one click. `rs()` above is the single
+// formatter all admin money rendering goes through, so gating it here covers
+// nearly every surface at once.
+//
+// Components opt in by shadowing the `rs` import with the hook:
+//
+//     const rs = useRs();     // instead of `import { rs } from "../ui"`
+//
+// so their JSX — `{rs(total)}` — does not change at all.
+//
+// This is visual masking only: the real numbers still reach the browser in
+// props. That is deliberate and sufficient, because the threat here is a
+// camera pointed at a screen, not the person holding the admin password.
+// ---------------------------------------------------------------------------
+
+const PrivacyCtx = createContext(false);
+
+export const PrivacyProvider = PrivacyCtx.Provider;
+
+/** True while the tutor has Privacy Mode on. */
+export function usePrivacy(): boolean {
+  return useContext(PrivacyCtx);
+}
+
+/** Money formatter that respects Privacy Mode. Shadow the `rs` import with it. */
+export function useRs(): (n: number) => string {
+  const hidden = usePrivacy();
+  return useCallback((n: number) => (hidden ? MASKED_AMOUNT : rs(n)), [hidden]);
+}
+
+/**
+ * Input type for a field holding a real amount. Privacy Mode turns it into a
+ * password field: the browser renders dots natively and FormData still submits
+ * the value, so the tutor can record a payment mid-recording.
+ */
+export function useAmountInputType(): "number" | "password" {
+  return usePrivacy() ? "password" : "number";
 }
 
 /** Format an ISO timestamp for a <input type="datetime-local"> default value. */

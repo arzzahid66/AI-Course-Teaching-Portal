@@ -12,7 +12,7 @@ import {
 } from "recharts";
 import type { DashboardStats } from "@/actions/batches";
 import type { BatchRow } from "@/lib/course";
-import { Card, ChartTooltip, MiniBar, StatCard, fmt, fmtDay, rs } from "../ui";
+import { Card, ChartTooltip, MiniBar, StatCard, fmt, fmtDay, usePrivacy, useRs } from "../ui";
 
 export default function DashboardTab({
   batch,
@@ -21,7 +21,11 @@ export default function DashboardTab({
   batch: BatchRow;
   stats: DashboardStats;
 }) {
-  const collectedPct = stats.fees.expected > 0 ? (stats.fees.collected / stats.fees.expected) * 100 : 0;
+  const rs = useRs();
+  const privacy = usePrivacy();
+  // The bar's width is itself a number — leave it empty while amounts are hidden.
+  const collectedPct =
+    privacy || stats.fees.expected <= 0 ? 0 : (stats.fees.collected / stats.fees.expected) * 100;
   const chartData = stats.attendance.map((a, i) => ({
     name: `W${i + 1}`,
     Present: a.present,
@@ -65,7 +69,14 @@ export default function DashboardTab({
           Starts {fmtDay(batch.start_date)} · {rs(batch.monthly_fee)}/month × {batch.months} · blocked{" "}
           {batch.grace_days} days after a due date
         </p>
-        {stats.fees.overdueStudents.length > 0 && (
+        {/* Naming who has not paid is as sensitive as the amount, so the whole
+            list goes away in Privacy Mode rather than just its numbers. */}
+        {privacy && stats.fees.overdueStudents.length > 0 && (
+          <p className="mt-4 text-sm text-slate-400">
+            Blocked-student list hidden — privacy mode is on.
+          </p>
+        )}
+        {!privacy && stats.fees.overdueStudents.length > 0 && (
           <>
             <h3 className="font-semibold text-sm mt-4 mb-1 text-rose-700">Blocked for unpaid fees</h3>
             <ul className="divide-y text-sm">

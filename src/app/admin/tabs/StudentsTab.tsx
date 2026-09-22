@@ -30,8 +30,8 @@ import {
   fieldClass,
   fmt,
   fmtDay,
-  rs,
   useAction,
+  useRs,
 } from "../ui";
 
 type Filter = "intake" | "all" | "none";
@@ -333,6 +333,7 @@ function StudentDetailModal({
   batches: BatchRow[];
   onClose: () => void;
 }) {
+  const rs = useRs();
   const [data, setData] = useState<StudentDetail | null>(null);
   const [showPw, setShowPw] = useState(false);
   const edit = useAction();

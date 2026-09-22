@@ -11,7 +11,7 @@ import {
   DEFAULT_MONTHS,
   DEFAULT_WEEKENDS,
 } from "@/lib/constants";
-import { Card, Modal, Msg, btn, fieldClass, fmtDay, rs, useAction } from "../ui";
+import { Card, Modal, Msg, btn, fieldClass, fmtDay, useAction, useAmountInputType, useRs } from "../ui";
 
 const STATUS_CLASS: Record<string, string> = {
   upcoming: "bg-amber-100 text-amber-700",
@@ -20,6 +20,7 @@ const STATUS_CLASS: Record<string, string> = {
 };
 
 function BatchFields({ batch }: { batch?: BatchRow }) {
+  const amountType = useAmountInputType();
   const label = "block text-xs font-medium text-slate-500 mb-1";
   return (
     <div className="grid grid-cols-2 gap-2">
@@ -85,7 +86,7 @@ function BatchFields({ batch }: { batch?: BatchRow }) {
         <span className={label}>Monthly fee (Rs)</span>
         <input
           name="monthly_fee"
-          type="number"
+          type={amountType}
           min={0}
           defaultValue={batch?.monthly_fee ?? DEFAULT_MONTHLY_FEE}
           className={fieldClass()}
@@ -130,6 +131,7 @@ export default function IntakesTab({
   batches: BatchRow[];
   selectedId: number | null;
 }) {
+  const rs = useRs();
   const router = useRouter();
   const create = useAction();
   const [editing, setEditing] = useState<BatchRow | null>(null);

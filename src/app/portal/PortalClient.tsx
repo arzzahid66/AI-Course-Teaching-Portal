@@ -33,6 +33,8 @@ import {
   VideosTab,
   WeekChecklist,
 } from "./sections";
+import ToolsTab from "./ToolsTab";
+import type { StudentResourceData } from "@/lib/resources";
 
 type Tab =
   | "class"
@@ -42,6 +44,7 @@ type Tab =
   | "progress"
   | "fees"
   | "quiz"
+  | "tools"
   | "leave"
   | "ask";
 
@@ -65,7 +68,13 @@ function fmtDate(d: string | null): string {
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString("en-GB", { timeZone: "Asia/Karachi" });
 }
 
-export default function PortalClient({ data }: { data: PortalData }) {
+export default function PortalClient({
+  data,
+  resources,
+}: {
+  data: PortalData;
+  resources: StudentResourceData;
+}) {
   const [tab, setTab] = useState<Tab>("class");
   const [showBio, setShowBio] = useState(false);
   const saveSub = useCallback(saveStudentSubscription, []);
@@ -75,6 +84,11 @@ export default function PortalClient({ data }: { data: PortalData }) {
     (w) => w.is_open && w.homework && (!w.submission || w.submission.status === "needs_changes")
   ).length;
   const feeAlert = data.fees.invoices.some((i) => i.status === "overdue");
+  // Red dot while a tool slot is actually running, so a student mid-session
+  // can find their sign-in code from any tab.
+  const toolLive = resources.tools.some(
+    (t) => t.mine?.status === "approved" && t.mine.slot === "active"
+  );
 
   const tabs: [Tab, string, string, boolean][] = [
     ["class", "Class", "🏫", false],
@@ -84,6 +98,7 @@ export default function PortalClient({ data }: { data: PortalData }) {
     ["progress", "Progress", "📈", false],
     ["fees", "Fees", "💳", feeAlert],
     ["quiz", "Quiz", "🧠", false],
+    ["tools", "Tools", "🔑", toolLive],
     ["leave", "Leave", "🌴", false],
     ["ask", "Ask", "💬", false],
   ];
@@ -124,6 +139,7 @@ export default function PortalClient({ data }: { data: PortalData }) {
       {tab === "progress" && <ProgressTab data={data} />}
       {tab === "fees" && <FeesTab data={data} />}
       {tab === "quiz" && <QuizTab data={data} />}
+      {tab === "tools" && <ToolsTab data={resources} />}
       {tab === "leave" && <LeaveTab data={data} />}
       {tab === "ask" && <AskTab data={data} />}
 

@@ -5,6 +5,7 @@ import { sql } from "@/lib/db";
 import { assertAdmin } from "@/lib/auth";
 import {
   getSetting,
+  setSetting,
   insertPayment,
   iso,
   loadInvoices,
@@ -15,6 +16,7 @@ import {
 import { notifyStudent } from "@/lib/pushNotifications";
 import { queueStudentEmail } from "@/lib/email";
 import { queueFeeWaivedEmail, queuePaymentReceiptEmail } from "@/lib/receiptEmail";
+import { PRIVACY_MODE_KEY } from "@/lib/constants";
 
 const rsText = (n: number) => `Rs ${n.toLocaleString("en-PK")}`;
 
@@ -309,5 +311,28 @@ export async function saveTutorWhatsapp(formData: FormData): Promise<{ error?: s
   `;
   revalidatePath("/admin");
   revalidatePath("/portal");
+  return {};
+}
+
+// ---------------------------------------------------------------------------
+// Privacy Mode (admin-side only)
+// ---------------------------------------------------------------------------
+
+/**
+ * True when the tutor has hidden every rupee amount on the admin dashboard.
+ * Read on the admin page load only — the student portal never consults this.
+ */
+export async function getPrivacyMode(): Promise<boolean> {
+  return (await getSetting(PRIVACY_MODE_KEY)) === "on";
+}
+
+/**
+ * Flip Privacy Mode. The admin UI flips its own state optimistically and calls
+ * this in the background, so masking is instant even before the write lands.
+ */
+export async function setPrivacyMode(on: boolean): Promise<{ error?: string }> {
+  await assertAdmin();
+  await setSetting(PRIVACY_MODE_KEY, on ? "on" : "off");
+  revalidatePath("/admin");
   return {};
 }

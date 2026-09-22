@@ -593,3 +593,11 @@ export async function getSetting(key: string): Promise<string | null> {
   }[];
   return rows[0]?.value ?? null;
 }
+
+/** Insert or update one `app_settings` row. Callers must already be authorized. */
+export async function setSetting(key: string, value: string): Promise<void> {
+  await sql`
+    INSERT INTO app_settings (key, value) VALUES (${key}, ${value})
+    ON CONFLICT (key) DO UPDATE SET value = ${value}
+  `;
+}

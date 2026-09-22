@@ -141,3 +141,58 @@ export const ADMIN_COOKIE = "classgate_admin";
 
 /** Name of the httpOnly student session cookie. */
 export const STUDENT_COOKIE = "classgate_student";
+
+// ---------------------------------------------------------------------------
+// Privacy Mode — hides every rupee amount across the ADMIN dashboard so the
+// tutor can screen-record the portal without showing who has paid what. The
+// student portal is never affected: a student always sees their own fee.
+// ---------------------------------------------------------------------------
+
+/** `app_settings` key holding "on" / "off" for admin-side Privacy Mode. */
+export const PRIVACY_MODE_KEY = "privacy_mode";
+
+/** What a hidden amount looks like. Dots, not a blur: a blur can be read back off a video. */
+export const MASKED_AMOUNT = "Rs •••••";
+
+// ---------------------------------------------------------------------------
+// Shared tools — students take turns on the Claude Code Pro plan and the
+// OpenAI API key. Each tool stores its own values in the DB; these only
+// pre-fill the "Add tool" form.
+// ---------------------------------------------------------------------------
+
+/** Default longest single booking (minutes). 300 = Claude's rolling 5-hour window. */
+export const RESOURCE_DEFAULT_MAX_MIN = 300;
+
+/** Default wait after a slot ends before the same student may book it again. */
+export const RESOURCE_DEFAULT_COOLDOWN_H = 24;
+
+/** Default how far ahead a student may book. */
+export const RESOURCE_DEFAULT_AHEAD_DAYS = 14;
+
+/** Durations offered in the student's booking form (minutes). */
+export const RESOURCE_DURATIONS = [60, 120, 180, 240, 300];
+
+// --- Claude sign-in code relay -------------------------------------------
+//
+// claude.ai's "Continue with email" does NOT email a code. It emails the
+// account owner a magic sign-in LINK; clicking it shows the owner a
+// verification code, which the student then types into the screen they are
+// already sitting on. So the student must reach that screen FIRST — the portal
+// gates the "Ask for code" button on a confirmation to enforce that order.
+
+/** The account students sign in as. Shown, and copyable, in the portal. */
+export const CLAUDE_LOGIN_EMAIL = "arailearn66@gmail.com";
+
+/**
+ * How long the portal keeps showing a relayed code. This is our own safety
+ * bound, NOT the real deadline: Anthropic's magic link expires 10 minutes
+ * after it was sent and has already been ticking. Keep it short and tell the
+ * student to hurry rather than implying the countdown is authoritative.
+ */
+export const LOGIN_CODE_TTL_MIN = 5;
+
+/** Most code requests one slot may make, so the tutor's inbox can't be spammed. */
+export const LOGIN_CODE_MAX_PER_SLOT = 5;
+
+/** How often the student's portal checks whether the tutor has sent the code. */
+export const LOGIN_CODE_POLL_MS = 5000;
