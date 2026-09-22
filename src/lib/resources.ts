@@ -137,25 +137,31 @@ export async function loadRequests(opts: {
 // ---------------------------------------------------------------------------
 
 /**
- * True when every fee month of the student's active enrollments is settled -
- * paid, or fully waived (a free seat counts as paid, since `amount - discount`
- * is then 0). A student with no enrollment at all is not eligible.
+ * True when the student has actually put money in - any amount, against any
+ * month of their active enrollments. A free seat (every month fully waived)
+ * counts too, since there is nothing for them to pay.
  *
- * Deliberately stricter than the rule that blocks check-in: an overdue student
- * cannot even reach the portal (see getAccountLock), so gating on "not
- * overdue" would let in everyone who can log in.
+ * The bar is deliberately low: partial payers are the students most likely to
+ * be short of cash and most in need of the shared tools. Only someone who has
+ * paid literally nothing is kept out.
+ *
+ * A student with no enrollment, or one whose intake has no fee months yet, is
+ * not eligible - there is nothing to have paid.
  */
-export async function isFullyPaid(studentId: number): Promise<boolean> {
+export async function hasStartedPaying(studentId: number): Promise<boolean> {
   const rows = (await sql`
-    SELECT bool_and(
-             GREATEST(0, i.amount - i.discount)
-             <= COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id), 0)
-           ) AS settled
-    FROM fee_invoices i
-    JOIN enrollments e ON e.id = i.enrollment_id
+    SELECT COALESCE(SUM(p.amount), 0) > 0            AS paid_any,
+           COUNT(DISTINCT i.id) > 0                  AS has_invoices,
+           bool_and(GREATEST(0, i.amount - i.discount) = 0) AS all_waived
+    FROM enrollments e
+    LEFT JOIN fee_invoices i ON i.enrollment_id = e.id
+    LEFT JOIN payments     p ON p.invoice_id = i.id
     WHERE e.student_id = ${studentId} AND e.status = 'active'
-  `) as { settled: boolean | null }[];
-  return rows[0]?.settled === true;
+  `) as { paid_any: boolean | null; has_invoices: boolean | null; all_waived: boolean | null }[];
+
+  const r = rows[0];
+  if (r?.has_invoices !== true) return false;
+  return r.paid_any === true || r.all_waived === true;
 }
 
 export type Eligibility = { ok: true } | { ok: false; reason: string };
@@ -173,8 +179,11 @@ export async function checkEligibility(
     return { ok: false, reason: `${resource.name} is not available right now.` };
   }
 
-  if (!(await isFullyPaid(studentId))) {
-    return { ok: false, reason: "Clear your remaining fee to unlock the shared tools." };
+  if (!(await hasStartedPaying(studentId))) {
+    return {
+      ok: false,
+      reason: "Pay some of your fee to unlock the shared tools.",
+    };
   }
 
   // One live booking per tool: a pending request, or one that has not ended yet.

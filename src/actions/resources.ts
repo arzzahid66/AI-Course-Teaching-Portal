@@ -6,7 +6,7 @@ import { assertAdmin, requireStudentId } from "@/lib/auth";
 import { iso, isoOrNull } from "@/lib/course";
 import {
   checkEligibility,
-  isFullyPaid,
+  hasStartedPaying,
   isOverlapViolation,
   loadRequests,
   loadResource,
@@ -339,9 +339,9 @@ export async function reviewResourceRequest(
   const row = existing[0];
   if (!row) return { error: "That request no longer exists." };
 
-  // A student can fall behind on fees between asking and being approved.
-  if (status === "approved" && !(await isFullyPaid(Number(row.student_id)))) {
-    return { error: "This student is no longer fully paid, so they cannot be approved." };
+  // Fee status can change between asking and being approved.
+  if (status === "approved" && !(await hasStartedPaying(Number(row.student_id)))) {
+    return { error: "This student has not paid any fee yet, so they cannot be approved." };
   }
 
   try {
