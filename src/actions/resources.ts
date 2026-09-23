@@ -140,11 +140,38 @@ export async function requestResource(formData: FormData): Promise<{ error?: str
     VALUES (${resourceId}, ${studentId}, ${reason}, ${startIso}, ${endIso})
   `;
 
+  const who = (await sql`
+    SELECT name FROM students WHERE id = ${studentId}
+  `) as { name: string }[];
+  const studentName = who[0]?.name ?? "A student";
+
+  // Both channels, same reasoning as a code request: a booking sits unanswered
+  // until the tutor sees it, and push alone is lost the moment the phone
+  // notification is swiped away. The email is the copy that waits in an inbox.
   notifyAdmin({
     title: "Tool request",
-    body: `A student asked for ${resource.name}.`,
+    body: `${studentName} asked for ${resource.name}.`,
     url: "/admin",
   }).catch(() => {});
+
+  const adminLink = adminUrl();
+  queueAdminEmail({
+    subject: `${studentName} wants to book ${resource.name}`,
+    heading: "New tool booking request",
+    lines: [
+      `${studentName} has asked to use ${resource.name}.`,
+      `Slot: ${fmtClassTime(startIso)} → ${fmtClassTime(endIso)}`,
+    ],
+    sections: [
+      { title: "Why they need it", lines: [reason] },
+      {
+        title: "What to do",
+        tone: "neutral",
+        lines: ["Open Admin → Tools and approve or reject the booking."],
+      },
+    ],
+    ...(adminLink ? { link: { label: "Open the admin Tools tab", url: adminLink } } : {}),
+  });
 
   revalidatePath("/portal");
   revalidatePath("/admin");
