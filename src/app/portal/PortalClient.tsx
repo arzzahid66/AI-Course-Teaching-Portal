@@ -27,6 +27,7 @@ import {
   CourseTab,
   FeeBlockedCard,
   FeesTab,
+  FeeDueBanner,
   HomeworkTab,
   NotEnrolledCard,
   ProgressTab,
@@ -126,6 +127,10 @@ export default function PortalClient({
       </header>
 
       {showBio && <TutorBioModal onClose={() => setShowBio(false)} />}
+
+      {/* Above the tab content, so it is on every tab - this is the student's
+          only warning before the account locks. */}
+      <FeeDueBanner data={data} onPay={() => setTab("fees")} />
 
       {tab === "class" && (
         <>

@@ -184,6 +184,20 @@ export const RESOURCE_DURATIONS = [60, 120, 180, 240, 300];
 export const CLAUDE_LOGIN_EMAIL = "arailearn66@gmail.com";
 
 /**
+ * Where time-sensitive tutor alerts go: "a student is waiting for a sign-in
+ * code", and the slot-ended revoke reminder.
+ *
+ * Deliberately the same inbox as CLAUDE_LOGIN_EMAIL: Anthropic's "Sign in to
+ * Claude.ai" link lands there too, so the alert and the link the tutor needs
+ * to act on sit side by side in one place.
+ *
+ * Kept separate from ADMIN_EMAIL, which is the admin *login* identity and is
+ * not necessarily a real inbox. `TUTOR_ALERT_EMAIL` in the environment
+ * overrides this.
+ */
+export const TUTOR_ALERT_EMAIL = CLAUDE_LOGIN_EMAIL;
+
+/**
  * How long the portal keeps showing a relayed code. This is our own safety
  * bound, NOT the real deadline: Anthropic's magic link expires 10 minutes
  * after it was sent and has already been ticking. Keep it short and tell the

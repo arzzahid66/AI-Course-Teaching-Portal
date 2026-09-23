@@ -2,6 +2,7 @@ import "server-only";
 import nodemailer, { type Transporter } from "nodemailer";
 import { after } from "next/server";
 import { sql } from "@/lib/db";
+import { TUTOR_ALERT_EMAIL } from "@/lib/constants";
 
 /**
  * Student emails over SMTP (Gmail). Mirrors pushNotifications.ts: the transport
@@ -53,6 +54,12 @@ function siteUrl(): string | null {
 export function portalUrl(): string | null {
   const base = siteUrl();
   return base ? `${base}/portal` : null;
+}
+
+/** Absolute link to the admin dashboard, or null when the site URL is unknown. */
+export function adminUrl(): string | null {
+  const base = siteUrl();
+  return base ? `${base}/admin` : null;
 }
 
 /** Absolute link to the student login page, or null when the site URL is unknown. */
@@ -271,11 +278,39 @@ export function fmtClassTime(d: Date | string): string {
  * most installs already have.
  */
 export async function sendAdminEmail(msg: EmailMessage): Promise<{ error?: string }> {
-  const to =
-    process.env.ADMIN_EMAIL ||
+  const to = tutorAlertAddress();
+  if (!to) return { error: "No TUTOR_ALERT_EMAIL / EMAIL_REPLY_TO / SMTP_USER is set." };
+  return deliver({ id: 0, name: "Tutor", email: to }, msg);
+}
+
+/**
+ * Where tutor alerts land. `TUTOR_ALERT_EMAIL` wins, then the constant, then
+ * the SMTP mailbox itself. ADMIN_EMAIL is deliberately NOT used: it is the
+ * admin login identity and is often not a real inbox.
+ */
+function tutorAlertAddress(): string {
+  return (
+    process.env.TUTOR_ALERT_EMAIL ||
+    TUTOR_ALERT_EMAIL ||
     process.env.EMAIL_REPLY_TO ||
     process.env.SMTP_USER ||
-    "";
-  if (!to.trim()) return { error: "No ADMIN_EMAIL / EMAIL_REPLY_TO / SMTP_USER is set." };
-  return deliver({ id: 0, name: "Tutor", email: to.trim() }, msg);
+    ""
+  ).trim();
+}
+
+/**
+ * Email the tutor after the response is sent. Use this from a server action so
+ * a slow SMTP handshake never makes the student wait - the same `after()`
+ * treatment `queueStudentEmail` gets.
+ */
+export function queueAdminEmail(msg: EmailMessage): void {
+  if (!emailEnabled()) return;
+  after(async () => {
+    try {
+      const res = await sendAdminEmail(msg);
+      if (res.error) console.error("[email] admin alert failed:", res.error);
+    } catch (e) {
+      console.error("[email] queued admin email failed:", e);
+    }
+  });
 }

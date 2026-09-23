@@ -7,6 +7,7 @@ import {
   cancelLoginCode,
   cancelResourceRequest,
   getMyLoginCode,
+  getStudentResources,
   markLoginCodeUsed,
   requestResource,
 } from "@/actions/resources";
@@ -20,6 +21,7 @@ import {
   LOGIN_CODE_POLL_MS,
   RESOURCE_DURATIONS,
 } from "@/lib/constants";
+import { usePolling } from "@/lib/usePolling";
 import { Card, fmtWhen } from "./sections";
 
 const STATUS_CHIP: Record<string, string> = {
@@ -41,7 +43,10 @@ function hoursLabel(minutes: number): string {
  * student glancing at "starts in 18:48" will think 6:48 pm rather than in
  * eighteen minutes.
  */
-function countdown(target: string, now: number): string {
+function countdown(target: string, now: number | null): string {
+  // Before mount there is no honest answer: the server's clock and the
+  // browser's differ, and rendering either one causes a hydration mismatch.
+  if (now === null) return "…";
   const ms = new Date(target).getTime() - now;
   if (ms <= 0) return "0m 0s";
   const total = Math.floor(ms / 1000);
@@ -54,10 +59,18 @@ function countdown(target: string, now: number): string {
   return `${m}m ${sec}s`;
 }
 
-/** A clock that ticks once a second, so countdowns stay honest. */
-function useNow(active: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
+/**
+ * A clock that ticks once a second, so countdowns stay honest.
+ *
+ * Starts as `null` and only takes a reading after mount. Server-rendered HTML
+ * and the browser's first render therefore agree (both show a placeholder),
+ * which is what keeps React from throwing a hydration mismatch on a page whose
+ * whole point is a live timer.
+ */
+function useNow(active: boolean): number | null {
+  const [now, setNow] = useState<number | null>(null);
   useEffect(() => {
+    setNow(Date.now());
     if (!active) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
@@ -65,7 +78,17 @@ function useNow(active: boolean): number {
   return now;
 }
 
-export default function ToolsTab({ data }: { data: StudentResourceData }) {
+export default function ToolsTab({ data: initialData }: { data: StudentResourceData }) {
+  // Keeps the card in step with the tutor: a booking approved or rejected while
+  // the student is looking at this tab updates in place.
+  const [data, setData] = useState(initialData);
+  useEffect(() => setData(initialData), [initialData]);
+
+  const refresh = useCallback(async () => {
+    setData(await getStudentResources());
+  }, []);
+  usePolling(refresh, 15000);
+
   return (
     <>
       {data.tools.map((tool) => (
@@ -241,7 +264,7 @@ function UpcomingSlot({
 }: {
   request: NonNullable<StudentResourceView["mine"]>;
   resource: StudentResourceView["resource"];
-  now: number;
+  now: number | null;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -302,7 +325,7 @@ function LiveSlot({
 }: {
   request: NonNullable<StudentResourceView["mine"]>;
   resource: StudentResourceView["resource"];
-  now: number;
+  now: number | null;
 }) {
   const [code, setCode] = useState<LoginCodeRow | null>(null);
   const [confirmed, setConfirmed] = useState(false);
@@ -312,7 +335,7 @@ function LiveSlot({
 
   const waiting = code !== null && code.code === null;
   const ready = code?.code != null;
-  const endingSoon = new Date(request.end_at).getTime() - now < 10 * 60_000;
+  const endingSoon = now !== null && new Date(request.end_at).getTime() - now < 10 * 60_000;
 
   const poll = useCallback(async () => {
     try {
@@ -324,11 +347,7 @@ function LiveSlot({
 
   // Only poll while something is actually outstanding, and stop the moment the
   // code lands. No background chatter once the student is signed in.
-  useEffect(() => {
-    if (!waiting) return;
-    const id = setInterval(poll, LOGIN_CODE_POLL_MS);
-    return () => clearInterval(id);
-  }, [waiting, poll]);
+  usePolling(poll, LOGIN_CODE_POLL_MS, waiting);
 
   // One read on mount, so a reopened tab picks up a code already sent.
   useEffect(() => {

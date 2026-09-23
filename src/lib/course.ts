@@ -82,6 +82,8 @@ export type InvoiceView = {
   paid: number;
   remaining: number;
   status: FeeStatus;
+  /** Its due date has arrived (it may still be inside the grace period). */
+  past_due: boolean;
   /** Unpaid past the grace period — blocks check-in. */
   blocks: boolean;
   note: string | null;
@@ -124,6 +126,7 @@ function toInvoiceView(r: InvoiceSqlRow): InvoiceView {
     paid,
     remaining,
     status,
+    past_due: Boolean(r.past_due),
     blocks: remaining > 0 && r.past_grace,
     note: r.note,
   };

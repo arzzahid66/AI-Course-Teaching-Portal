@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   deleteResource,
   deleteResourceRequest,
@@ -43,7 +43,26 @@ function windowLabel(startAt: string, endAt: string): string {
   return `${fmt(startAt)} → ${fmt(endAt)}`;
 }
 
-export default function ResourcesTab({ board }: { board: ResourceBoard }) {
+/**
+ * This tab is a CONTROLLED view of the board: the state and the polling both
+ * live in AdminDashboard. Keeping them there is what lets the Tools badge
+ * update while the tutor is sitting on a different tab - polling from in here
+ * only ever ran while this tab was already open, which is exactly when the
+ * tutor least needs to be told.
+ */
+export default function ResourcesTab({
+  board,
+  onRefresh,
+  syncedAt,
+  pollMs,
+}: {
+  board: ResourceBoard;
+  onRefresh: () => Promise<void>;
+  /** When the board was last re-fetched; null until the first poll lands. */
+  syncedAt: number | null;
+  /** Current auto-refresh interval, shown so the tutor knows it is live. */
+  pollMs: number;
+}) {
   const [editing, setEditing] = useState<ResourceRow | null>(null);
   const [adding, setAdding] = useState(false);
 
@@ -56,6 +75,8 @@ export default function ResourcesTab({ board }: { board: ResourceBoard }) {
 
   return (
     <>
+      <SyncBar onRefresh={onRefresh} syncedAt={syncedAt} pollMs={pollMs} />
+
       {/* The most time-sensitive thing on the page: a student is sitting on the
           claude.ai code screen right now, waiting. It goes above everything. */}
       {board.codeRequests.length > 0 && (
@@ -182,6 +203,70 @@ export default function ResourcesTab({ board }: { board: ResourceBoard }) {
 }
 
 // ---------------------------------------------------------------------------
+// Live-ness strip
+// ---------------------------------------------------------------------------
+
+/** "12s" / "3m" / "1h" - how long ago the board was last checked. */
+function agoLabel(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  return `${Math.floor(seconds / 3600)}h`;
+}
+
+/**
+ * Auto-refresh is invisible by nature, so this says it out loud. Without it
+ * the tutor cannot tell a live page from a stale one and presses F5 anyway -
+ * which is the exact complaint this strip exists to answer. The button is here
+ * for the moments they do not want to wait for the next tick.
+ */
+function SyncBar({
+  onRefresh,
+  syncedAt,
+  pollMs,
+}: {
+  onRefresh: () => Promise<void>;
+  syncedAt: number | null;
+  pollMs: number;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  // Same hydration rule as everywhere else here: no clock before mount.
+  const [nowMs, setNowMs] = useState<number | null>(null);
+  useEffect(() => {
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const ago =
+    syncedAt === null || nowMs === null
+      ? null
+      : Math.max(0, Math.round((nowMs - syncedAt) / 1000));
+
+  async function manual() {
+    setBusy(true);
+    try {
+      await onRefresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 mb-3 text-xs text-slate-500">
+      <span>
+        <span className="text-emerald-500">{"●"}</span> Updates on its own every{" "}
+        {Math.round(pollMs / 1000)}s
+        {ago !== null && ` · checked ${ago < 5 ? "just now" : agoLabel(ago) + " ago"}`}
+      </span>
+      <button onClick={manual} disabled={busy} className={btn.small}>
+        {busy ? "Refreshing…" : "↻ Refresh now"}
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // One student waiting for a sign-in code
 // ---------------------------------------------------------------------------
 function CodeRequestItem({ req }: { req: ResourceBoard["codeRequests"][number] }) {
@@ -189,7 +274,16 @@ function CodeRequestItem({ req }: { req: ResourceBoard["codeRequests"][number] }
   const drop = useAction();
   const [code, setCode] = useState("");
 
-  const waitingSec = Math.max(0, Math.round((Date.now() - new Date(req.asked_at).getTime()) / 1000));
+  // Same hydration trap as the portal countdown: read the clock after mount,
+  // and re-read it as the board polls so "waiting 26s" keeps climbing.
+  const [nowMs, setNowMs] = useState<number | null>(null);
+  useEffect(() => {
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const waitingSec =
+    nowMs === null ? null : Math.max(0, Math.round((nowMs - new Date(req.asked_at).getTime()) / 1000));
 
   return (
     <li className="py-3">
@@ -199,7 +293,9 @@ function CodeRequestItem({ req }: { req: ResourceBoard["codeRequests"][number] }
           <span className="font-normal text-slate-500">{"·"} {req.resource_name}</span>
         </p>
         <span className="text-xs text-amber-700">
-          waiting {waitingSec < 90 ? `${waitingSec}s` : `${Math.round(waitingSec / 60)} min`}
+          {waitingSec === null
+            ? "waiting…"
+            : `waiting ${waitingSec < 90 ? `${waitingSec}s` : `${Math.round(waitingSec / 60)} min`}`}
         </span>
       </div>
       <p className="text-xs text-slate-500 mb-2">

@@ -14,6 +14,8 @@ import {
 import { useRouter } from "next/navigation";
 import { saveAdminSubscription } from "@/actions/push";
 import { usePushSubscription } from "@/lib/usePushSubscription";
+import { usePolling } from "@/lib/usePolling";
+import { getResourceBoard } from "@/actions/resources";
 import {
   answerQuestion,
   setQuestionStatus,
@@ -112,7 +114,7 @@ export default function AdminDashboard({
   quizScoreboard,
   quizLeaderboard,
   loginLogs,
-  resourceBoard,
+  resourceBoard: initialResourceBoard,
   privacy: initialPrivacy,
 }: {
   batches: BatchRow[];
@@ -160,11 +162,32 @@ export default function AdminDashboard({
   const openQuestions = questions.filter((q) => q.status === "open").length;
   const pendingLeaves = leaves.filter((l) => l.status === "pending").length;
   const pendingQuizReqs = quizRequests.filter((r) => r.status === "pending").length;
+  // ---- Shared tools: kept current for the whole admin screen -------------
+  // The board lives up here rather than inside ResourcesTab for one reason:
+  // the Tools badge has to light up while the tutor is looking at a DIFFERENT
+  // tab. A student sitting on the claude.ai code screen is waiting on a
+  // person, and that person is usually on Fees or Classes when it lands.
+  // Polling inside ResourcesTab only ran while that tab was already open.
+  const [resourceBoard, setResourceBoard] = useState(initialResourceBoard);
+  useEffect(() => setResourceBoard(initialResourceBoard), [initialResourceBoard]);
+  // Read after mount only; a server-rendered clock would not match the client.
+  const [toolsSyncedAt, setToolsSyncedAt] = useState<number | null>(null);
+
+  const refreshTools = useCallback(async () => {
+    setResourceBoard(await getResourceBoard());
+    setToolsSyncedAt(Date.now());
+  }, []);
+
   // A student sitting on the claude.ai code screen is the most urgent thing
   // here, so code requests count toward the badge alongside new bookings.
   const toolsWaiting =
     resourceBoard.codeRequests.length +
     resourceBoard.requests.filter((r) => r.status === "pending").length;
+
+  // Three speeds, so the ordinary case - nothing waiting, tutor busy on some
+  // other tab - is not hitting the database every few seconds all day.
+  const toolsPollMs = toolsWaiting > 0 ? 8000 : tab === "tools" ? 20000 : 60000;
+  usePolling(refreshTools, toolsPollMs);
   const toMark =
     batchData?.homework.submissions.filter((s) => s.status === "submitted" && s.marks == null).length ?? 0;
 
@@ -296,7 +319,14 @@ export default function AdminDashboard({
               leaderboard={quizLeaderboard}
             />
           )}
-          {tab === "tools" && <ResourcesTab board={resourceBoard} />}
+          {tab === "tools" && (
+            <ResourcesTab
+              board={resourceBoard}
+              onRefresh={refreshTools}
+              syncedAt={toolsSyncedAt}
+              pollMs={toolsPollMs}
+            />
+          )}
           {tab === "questions" && <QuestionsTab questions={questions} />}
           {tab === "leave" && <LeaveTab leaves={leaves} />}
           {tab === "logs" && <LogsTab logs={loginLogs} />}

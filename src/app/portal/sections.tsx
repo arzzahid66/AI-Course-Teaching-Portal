@@ -211,6 +211,61 @@ export function FeeBlockedCard({
   );
 }
 
+/**
+ * Shown on every portal tab while the student still owes a fee month.
+ *
+ * Two phases, because they need different things said:
+ *
+ *   * **before the due date** - informational. The student is not in trouble,
+ *     but should know the bill exists and, more importantly, the exact date
+ *     the account switches off if they ignore it.
+ *   * **after the due date, inside the grace period** - urgent. This is the
+ *     last window in which they can still get in and fix it.
+ *
+ * Once grace runs out, getAccountLock() blocks the portal entirely, so the
+ * student never reaches a tab to read a banner. That is why this warns from
+ * the moment money is owed rather than waiting for the due date, and why it
+ * cannot be dismissed.
+ */
+export function FeeDueBanner({ data, onPay }: { data: PortalData; onPay: () => void }) {
+  // The soonest month they still owe on: the one that will lock them out first.
+  const owing = data.fees.invoices
+    .filter((i) => i.remaining > 0 && !i.blocks)
+    .sort((a, b) => a.due_date.localeCompare(b.due_date));
+  if (owing.length === 0) return null;
+
+  const next = owing[0];
+  const urgent = next.past_due;
+
+  return (
+    <div
+      className={`mb-4 rounded-2xl px-4 py-3 ring-1 ${
+        urgent ? "bg-amber-50 ring-amber-300" : "bg-brand-50 ring-brand-200"
+      }`}
+    >
+      <p className={`text-sm font-bold ${urgent ? "text-amber-900" : "text-brand-800"}`}>
+        {urgent ? "⏳ Grace period — fee pending" : "💳 Fee due"}
+      </p>
+      <p className={`text-sm mt-1 ${urgent ? "text-amber-900" : "text-slate-700"}`}>
+        Month {next.month_no} fee {"—"} <b>{rs(next.remaining)}</b>{" "}
+        {urgent
+          ? `is unpaid. It was due on ${fmtDay(next.due_date, true)}.`
+          : `is due on ${fmtDay(next.due_date, true)}.`}{" "}
+        Pay by <b>{fmtDay(next.grace_until, true)}</b>, otherwise your account is deactivated and
+        you lose access to classes, videos and homework.
+      </p>
+      <button
+        onClick={onPay}
+        className={`mt-2.5 rounded-xl text-white text-sm font-semibold px-4 py-2 active:scale-[0.97] transition ${
+          urgent ? "bg-amber-600" : "bg-brand-600"
+        }`}
+      >
+        Pay now
+      </button>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // This week's checklist (Class tab)
 // ---------------------------------------------------------------------------

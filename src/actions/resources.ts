@@ -18,7 +18,7 @@ import {
   type StudentResourceView,
 } from "@/lib/resources";
 import { notifyAdmin, notifyStudent } from "@/lib/pushNotifications";
-import { fmtClassTime, queueStudentEmail } from "@/lib/email";
+import { adminUrl, fmtClassTime, queueAdminEmail, queueStudentEmail } from "@/lib/email";
 import {
   LOGIN_CODE_MAX_PER_SLOT,
   LOGIN_CODE_TTL_MIN,
@@ -167,14 +167,21 @@ export async function cancelResourceRequest(id: number): Promise<{ error?: strin
 /** The student's own request row, but only while its slot is running. */
 async function activeSlot(studentId: number, requestId: number) {
   const rows = (await sql`
-    SELECT r.id, sr.name AS resource_name
+    SELECT r.id, r.start_at, r.end_at, sr.name AS resource_name, s.name AS student_name
     FROM resource_requests r
     JOIN shared_resources sr ON sr.id = r.resource_id
+    JOIN students s ON s.id = r.student_id
     WHERE r.id = ${requestId} AND r.student_id = ${studentId}
       AND r.status = 'approved'
       AND r.start_at <= now() AND now() < r.end_at
     LIMIT 1
-  `) as { id: number; resource_name: string }[];
+  `) as {
+    id: number;
+    start_at: unknown;
+    end_at: unknown;
+    resource_name: string;
+    student_name: string;
+  }[];
   return rows[0] ?? null;
 }
 
@@ -203,11 +210,37 @@ export async function askForLoginCode(requestId: number): Promise<{ error?: stri
 
   await sql`INSERT INTO resource_login_codes (request_id) VALUES (${requestId})`;
 
+  // The student is sitting on the claude.ai code screen right now, so this is
+  // the one alert that has to reach the tutor wherever they are: push for the
+  // phone, email as the channel that survives a closed browser.
   notifyAdmin({
     title: "Login code needed",
-    body: `A student is waiting for a ${slot.resource_name} sign-in code.`,
+    body: `${slot.student_name} is waiting for a ${slot.resource_name} sign-in code.`,
     url: "/admin",
   }).catch(() => {});
+
+  const link = adminUrl();
+  queueAdminEmail({
+    subject: `${slot.student_name} needs a ${slot.resource_name} sign-in code`,
+    heading: "Sign-in code needed",
+    lines: [
+      `${slot.student_name} is waiting on the claude.ai code screen right now.`,
+      `Slot: ${fmtClassTime(iso(slot.start_at))} → ${fmtClassTime(iso(slot.end_at))}`,
+    ],
+    sections: [
+      {
+        title: "What to do",
+        tone: "warning",
+        lines: [
+          'Open the "Sign in to Claude.ai" email from Anthropic.',
+          "Click Sign in - claude.ai then shows you a code.",
+          "Paste that code into Admin → Tools.",
+          "The link expires 10 minutes after Anthropic sent it, so be quick.",
+        ],
+      },
+    ],
+    ...(link ? { link: { label: "Open the admin Tools tab", url: link } } : {}),
+  });
 
   revalidatePath("/admin");
   return {};
