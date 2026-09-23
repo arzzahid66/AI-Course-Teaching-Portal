@@ -501,7 +501,8 @@ CREATE TABLE IF NOT EXISTS shared_resources (
   blurb           text,                              -- shown to students on the card
   handover_note   text,                              -- how they will actually get access
   help_video_url  text,                              -- YouTube link: how to get and use it
-  max_minutes     int  NOT NULL DEFAULT 300,         -- 300 = Claude's rolling 5-hour window
+  max_minutes     int  NOT NULL DEFAULT 300,         -- longest booking; 0 = no cap
+  capacity        int  NOT NULL DEFAULT 1,           -- how many students may hold it at once
   cooldown_hours  int  NOT NULL DEFAULT 24,          -- wait after a slot before booking again
   book_ahead_days int  NOT NULL DEFAULT 14,
   is_active       boolean NOT NULL DEFAULT true,
@@ -515,6 +516,7 @@ CREATE TABLE IF NOT EXISTS resource_requests (
   id                 serial PRIMARY KEY,
   resource_id        int  NOT NULL REFERENCES shared_resources(id) ON DELETE CASCADE,
   student_id         int  NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  seat               int  NOT NULL DEFAULT 1,  -- which place inside the tool's capacity
   reason             text NOT NULL,
   start_at           timestamptz NOT NULL,
   end_at             timestamptz NOT NULL,
@@ -532,7 +534,11 @@ CREATE TABLE IF NOT EXISTS resource_requests (
 -- however many Approve clicks land at the same moment.
 DO $$ BEGIN
   ALTER TABLE resource_requests ADD CONSTRAINT resource_no_overlap
-    EXCLUDE USING gist (resource_id WITH =, tstzrange(start_at, end_at) WITH &&)
+    EXCLUDE USING gist (
+      resource_id WITH =,
+      seat        WITH =,
+      tstzrange(start_at, end_at) WITH &&
+    )
     WHERE (status = 'approved');
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;

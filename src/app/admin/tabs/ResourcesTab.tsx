@@ -19,6 +19,7 @@ import type {
 import {
   RESOURCE_DEFAULT_AHEAD_DAYS,
   RESOURCE_DEFAULT_COOLDOWN_H,
+  RESOURCE_DEFAULT_CAPACITY,
   RESOURCE_DEFAULT_MAX_MIN,
   normalizeUrl,
   youtubeThumbUrl,
@@ -42,6 +43,7 @@ const STATUS_META: Record<RequestRow["status"], { label: string; chip: string }>
 };
 
 function hours(minutes: number): string {
+  if (minutes <= 0) return "no limit";
   const h = minutes / 60;
   return h === 1 ? "1 hour" : `${Number.isInteger(h) ? h : h.toFixed(1)} hours`;
 }
@@ -182,7 +184,7 @@ export default function ResourcesTab({
                   )}
                 </p>
                 <p className="text-xs text-slate-500">
-                  max {hours(r.max_minutes)} {"·"} {r.cooldown_hours}h cooldown {"·"}{" "}
+                  {r.capacity} at a time {"·"} max {hours(r.max_minutes)} {"·"} {r.cooldown_hours}h cooldown {"·"}{" "}
                   {r.book_ahead_days}d ahead
                 </p>
                 {r.help_video_url && (
@@ -622,14 +624,26 @@ function ResourceModal({
           </span>
         </label>
 
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           <label className="block">
             <span className={label}>Max minutes</span>
             <input
               name="max_minutes"
               type="number"
-              min={15}
+              min={0}
               defaultValue={resource?.max_minutes ?? RESOURCE_DEFAULT_MAX_MIN}
+              title="0 means no limit"
+              className={fieldClass()}
+            />
+          </label>
+          <label className="block">
+            <span className={label}>At a time</span>
+            <input
+              name="capacity"
+              type="number"
+              min={1}
+              defaultValue={resource?.capacity ?? RESOURCE_DEFAULT_CAPACITY}
+              title="How many students may hold this tool at once"
               className={fieldClass()}
             />
           </label>
@@ -654,6 +668,10 @@ function ResourceModal({
             />
           </label>
         </div>
+        <p className="text-xs text-slate-400">
+          Max minutes 0 = no limit. {'"'}At a time{'"'} is how many students can hold
+          this tool together.
+        </p>
 
         <div className="flex items-center gap-4">
           <label className="flex items-center gap-2 text-sm">

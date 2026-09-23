@@ -23,7 +23,10 @@ export type ResourceRow = {
   handover_note: string | null;
   /** Optional "how to get and use it" video, shown on the student's tool card. */
   help_video_url: string | null;
+  /** Longest single booking in minutes; 0 means no cap. */
   max_minutes: number;
+  /** How many students may hold this tool at the same time. */
+  capacity: number;
   cooldown_hours: number;
   book_ahead_days: number;
   is_active: boolean;
@@ -68,7 +71,7 @@ export type LoginCodeRow = {
 export async function loadResources(activeOnly: boolean): Promise<ResourceRow[]> {
   const rows = (await sql`
     SELECT id, name, blurb, handover_note, help_video_url, max_minutes,
-           cooldown_hours, book_ahead_days, is_active, sort_order
+           capacity, cooldown_hours, book_ahead_days, is_active, sort_order
     FROM shared_resources
     WHERE (${!activeOnly} OR is_active = true)
     ORDER BY sort_order ASC, id ASC
@@ -80,6 +83,7 @@ export async function loadResources(activeOnly: boolean): Promise<ResourceRow[]>
     handover_note: (r.handover_note as string | null) ?? null,
     help_video_url: (r.help_video_url as string | null) ?? null,
     max_minutes: Number(r.max_minutes),
+    capacity: Math.max(1, Number(r.capacity) || 1),
     cooldown_hours: Number(r.cooldown_hours),
     book_ahead_days: Number(r.book_ahead_days),
     is_active: Boolean(r.is_active),
@@ -247,7 +251,8 @@ export function validateWindow(
   if (!Number.isFinite(minutes) || minutes <= 0) {
     return { ok: false, reason: "Pick how long you need it for." };
   }
-  if (minutes > resource.max_minutes) {
+  // max_minutes = 0 means the tutor lifted the cap for this tool.
+  if (resource.max_minutes > 0 && minutes > resource.max_minutes) {
     const hours = resource.max_minutes / 60;
     return {
       ok: false,
@@ -329,4 +334,59 @@ export async function loadToolsHelpVideo(): Promise<ToolsHelpVideo | null> {
   const link = (url ?? "").trim();
   if (!link) return null;
   return { url: link, title: (title ?? "").trim() || "How the shared tools work" };
+}
+
+/**
+ * Lowest free place inside a tool's capacity for the given window, or null
+ * when every place is taken.
+ *
+ * This is only a *pick*, not a guarantee. Two approvals racing each other can
+ * both read the same free seat; the `resource_no_overlap` EXCLUDE constraint
+ * is what actually stops them both being written, and the caller turns that
+ * violation into a friendly message.
+ *
+ * The capacity ceiling itself is enforced here rather than in the database -
+ * generate_series never offers a seat above `capacity` - because a CHECK
+ * constraint cannot reach into shared_resources to read it.
+ */
+export async function findFreeSeat(
+  resourceId: number,
+  capacity: number,
+  startIso: string,
+  endIso: string,
+  ignoreRequestId: number | null = null
+): Promise<number | null> {
+  const rows = (await sql`
+    SELECT s.seat
+    FROM generate_series(1, ${capacity}) AS s(seat)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM resource_requests r
+      WHERE r.resource_id = ${resourceId}
+        AND r.status = 'approved'
+        AND r.seat = s.seat
+        AND (${ignoreRequestId}::int IS NULL OR r.id <> ${ignoreRequestId})
+        AND tstzrange(r.start_at, r.end_at)
+            && tstzrange(${startIso}::timestamptz, ${endIso}::timestamptz)
+    )
+    ORDER BY s.seat
+    LIMIT 1
+  `) as { seat: number }[];
+  return rows[0] ? Number(rows[0].seat) : null;
+}
+
+/** How many approved bookings already overlap this window. */
+export async function countOverlapping(
+  resourceId: number,
+  startIso: string,
+  endIso: string
+): Promise<number> {
+  const rows = (await sql`
+    SELECT count(*)::int AS n
+    FROM resource_requests
+    WHERE resource_id = ${resourceId}
+      AND status = 'approved'
+      AND tstzrange(start_at, end_at)
+          && tstzrange(${startIso}::timestamptz, ${endIso}::timestamptz)
+  `) as { n: number }[];
+  return Number(rows[0]?.n ?? 0);
 }

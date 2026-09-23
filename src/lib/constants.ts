@@ -273,8 +273,18 @@ export const RESOURCE_DEFAULT_COOLDOWN_H = 24;
 /** Default how far ahead a student may book. */
 export const RESOURCE_DEFAULT_AHEAD_DAYS = 14;
 
-/** Durations offered in the student's booking form (minutes). */
-export const RESOURCE_DURATIONS = [60, 120, 180, 240, 300];
+/** Default number of students who may hold a tool at the same time. */
+export const RESOURCE_DEFAULT_CAPACITY = 1;
+
+/**
+ * Durations offered in the student's booking form (minutes).
+ *
+ * The list runs past Claude's rolling 5-hour window on purpose: a tool with
+ * `max_minutes = 0` has no cap, and the form filters this list down to
+ * whatever the tool actually allows. So this list, not the cap, is the real
+ * ceiling for an uncapped tool.
+ */
+export const RESOURCE_DURATIONS = [60, 120, 180, 240, 300, 480, 720, 1440];
 
 // --- Claude sign-in code relay -------------------------------------------
 //

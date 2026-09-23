@@ -35,6 +35,10 @@ const STATUS_CHIP: Record<string, string> = {
 
 function hoursLabel(minutes: number): string {
   const h = minutes / 60;
+  if (h >= 24 && Number.isInteger(h / 24)) {
+    const d = h / 24;
+    return d === 1 ? "1 day" : `${d} days`;
+  }
   return h === 1 ? "1 hour" : `${Number.isInteger(h) ? h : h.toFixed(1)} hours`;
 }
 
@@ -161,7 +165,8 @@ function ToolCard({ tool }: { tool: StudentResourceView }) {
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-bold">{resource.name}</h2>
         <span className="text-xs text-slate-500">
-          up to {hoursLabel(resource.max_minutes)}
+          {resource.max_minutes > 0 ? `up to ${hoursLabel(resource.max_minutes)}` : "no time limit"}
+          {resource.capacity > 1 && ` · ${resource.capacity} at a time`}
         </span>
       </div>
       {resource.blurb && <p className="text-sm text-slate-600 mt-1">{resource.blurb}</p>}
@@ -191,14 +196,24 @@ function ToolCard({ tool }: { tool: StudentResourceView }) {
 
       {busy.length > 0 && !isLive && (
         <div className="mt-3 border-t pt-3">
-          <p className="text-xs font-semibold text-slate-500 mb-1">Already booked</p>
+          <p className="text-xs font-semibold text-slate-500 mb-1">
+            {resource.capacity > 1 ? "Booked by others" : "Already booked"}
+          </p>
           <ul className="text-xs text-slate-500 space-y-0.5">
-            {busy.slice(0, 6).map((b) => (
-              <li key={b.start_at}>
+            {/* Two students can share a start time once capacity > 1, so the
+                key has to include the position, not just the window. */}
+            {busy.slice(0, 6).map((b, i) => (
+              <li key={`${b.start_at}-${b.end_at}-${i}`}>
                 {fmtWhen(b.start_at)} {"→"} {fmtWhen(b.end_at)}
               </li>
             ))}
           </ul>
+          {resource.capacity > 1 && (
+            <p className="text-xs text-slate-400 mt-1">
+              {resource.capacity} students can use it at once, so these times may
+              still have room.
+            </p>
+          )}
         </div>
       )}
     </Card>
@@ -596,7 +611,11 @@ function BookingForm({ resource }: { resource: StudentResourceView["resource"] }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const durations = RESOURCE_DURATIONS.filter((m) => m <= resource.max_minutes);
+  // max_minutes = 0 means no cap, so every offered length is allowed.
+  const durations =
+    resource.max_minutes > 0
+      ? RESOURCE_DURATIONS.filter((m) => m <= resource.max_minutes)
+      : RESOURCE_DURATIONS;
 
   return (
     <form
@@ -674,7 +693,10 @@ function BookingForm({ resource }: { resource: StudentResourceView["resource"] }
         {busy ? "Sending…" : "Request this slot"}
       </button>
       <p className="text-xs text-slate-400">
-        Your tutor approves it. Only one student can use it at a time.
+        Your tutor approves it.{" "}
+        {resource.capacity > 1
+          ? `${resource.capacity} students can use it at the same time.`
+          : "Only one student can use it at a time."}
       </p>
     </form>
   );

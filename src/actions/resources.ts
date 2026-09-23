@@ -12,6 +12,8 @@ import {
   loadResource,
   loadResources,
   loadToolsHelpVideo,
+  countOverlapping,
+  findFreeSeat,
   validateWindow,
   type LoginCodeRow,
   type ResourceBoard,
@@ -25,6 +27,7 @@ import {
   LOGIN_CODE_TTL_MIN,
   RESOURCE_DEFAULT_AHEAD_DAYS,
   RESOURCE_DEFAULT_COOLDOWN_H,
+  RESOURCE_DEFAULT_CAPACITY,
   RESOURCE_DEFAULT_MAX_MIN,
   TOOLS_VIDEO_TITLE_KEY,
   TOOLS_VIDEO_URL_KEY,
@@ -122,17 +125,18 @@ export async function requestResource(formData: FormData): Promise<{ error?: str
   const endIso = window.endAt.toISOString();
 
   // Friendly pre-check so the student is not left waiting for a slot the tutor
-  // can never approve. The real guarantee is the EXCLUDE constraint, which
-  // only covers approved rows - two students may both *ask* for the same
-  // window, and the tutor picks one.
-  const clash = (await sql`
-    SELECT 1 FROM resource_requests
-    WHERE resource_id = ${resourceId} AND status = 'approved'
-      AND tstzrange(start_at, end_at) && tstzrange(${startIso}::timestamptz, ${endIso}::timestamptz)
-    LIMIT 1
-  `) as unknown[];
-  if (clash.length > 0) {
-    return { error: "Someone already has that slot. Pick another time." };
+  // can never approve. A tool takes `capacity` students at once, so this only
+  // refuses once every place in the window is already approved. The real
+  // guarantee is the EXCLUDE constraint at approve time - two students may
+  // both *ask* for the last place, and the tutor picks one.
+  const taken = await countOverlapping(resourceId, startIso, endIso);
+  if (taken >= resource.capacity) {
+    return {
+      error:
+        resource.capacity === 1
+          ? "Someone already has that slot. Pick another time."
+          : `All ${resource.capacity} places are taken for that time. Pick another time.`,
+    };
   }
 
   await sql`
@@ -441,17 +445,44 @@ export async function reviewResourceRequest(
     return { error: "This student has not paid any fee yet, so they cannot be approved." };
   }
 
+  // Approving puts the booking in one of the tool's places. Rejecting or
+  // re-opening leaves the seat alone - the constraint only looks at approved
+  // rows, so a parked seat number on a rejected row is harmless.
+  let seat = 1;
+  if (status === "approved") {
+    const resource = await loadResource(Number(row.resource_id));
+    if (!resource) return { error: "That tool no longer exists." };
+    const free = await findFreeSeat(
+      resource.id,
+      resource.capacity,
+      iso(row.start_at),
+      iso(row.end_at),
+      id
+    );
+    if (free === null) {
+      return {
+        error:
+          resource.capacity === 1
+            ? "That slot now clashes with another approved booking."
+            : `All ${resource.capacity} places on ${resource.name} are taken for that time.`,
+      };
+    }
+    seat = free;
+  }
+
   try {
     await sql`
       UPDATE resource_requests
       SET status = ${status},
           feedback = ${feedback || null},
+          seat = CASE WHEN ${status} = 'approved' THEN ${seat} ELSE seat END,
           reviewed_at = CASE WHEN ${status} = 'pending' THEN NULL ELSE now() END
       WHERE id = ${id}
     `;
   } catch (e) {
+    // Another approval won the race between findFreeSeat and this write.
     if (isOverlapViolation(e)) {
-      return { error: "That slot now clashes with another approved booking." };
+      return { error: "That slot was just taken by another approval. Try again." };
     }
     throw e;
   }
@@ -570,13 +601,23 @@ export async function saveResource(
     }
   }
 
-  const maxMinutes = Number(formData.get("max_minutes")) || RESOURCE_DEFAULT_MAX_MIN;
+  // 0 is a real value here ("no cap"), so it must not fall through to the
+  // default the way an empty field does.
+  const rawMax = String(formData.get("max_minutes") ?? "").trim();
+  const maxMinutes = rawMax === "" ? RESOURCE_DEFAULT_MAX_MIN : Number(rawMax);
+  const capacity = Number(formData.get("capacity")) || RESOURCE_DEFAULT_CAPACITY;
   const cooldown = Number(formData.get("cooldown_hours")) || RESOURCE_DEFAULT_COOLDOWN_H;
   const ahead = Number(formData.get("book_ahead_days")) || RESOURCE_DEFAULT_AHEAD_DAYS;
   const active = formData.get("is_active") === "on";
   const sort = Number(formData.get("sort_order")) || 0;
 
-  if (maxMinutes < 15) return { error: "A booking needs at least 15 minutes." };
+  if (!Number.isFinite(maxMinutes) || maxMinutes < 0) {
+    return { error: "Max minutes must be 0 (no limit) or a positive number." };
+  }
+  if (maxMinutes > 0 && maxMinutes < 15) {
+    return { error: "A booking needs at least 15 minutes." };
+  }
+  if (capacity < 1) return { error: "At least one student must be able to book it." };
 
   try {
     if (id) {
@@ -584,17 +625,18 @@ export async function saveResource(
         UPDATE shared_resources
         SET name = ${name}, blurb = ${blurb}, handover_note = ${note},
             help_video_url = ${video},
-            max_minutes = ${maxMinutes}, cooldown_hours = ${cooldown},
+            max_minutes = ${maxMinutes}, capacity = ${capacity},
+            cooldown_hours = ${cooldown},
             book_ahead_days = ${ahead}, is_active = ${active}, sort_order = ${sort}
         WHERE id = ${id}
       `;
     } else {
       await sql`
         INSERT INTO shared_resources
-          (name, blurb, handover_note, help_video_url, max_minutes, cooldown_hours,
-           book_ahead_days, is_active, sort_order)
-        VALUES (${name}, ${blurb}, ${note}, ${video}, ${maxMinutes}, ${cooldown},
-                ${ahead}, ${active}, ${sort})
+          (name, blurb, handover_note, help_video_url, max_minutes, capacity,
+           cooldown_hours, book_ahead_days, is_active, sort_order)
+        VALUES (${name}, ${blurb}, ${note}, ${video}, ${maxMinutes}, ${capacity},
+                ${cooldown}, ${ahead}, ${active}, ${sort})
       `;
     }
   } catch (e) {

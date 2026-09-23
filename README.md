@@ -87,6 +87,7 @@ changes go in [`migrations/`](migrations/) and are applied with a runner that on
 ```bash
 node --env-file=.env scripts/apply-migration.mjs migrations/001_shared_resources.sql
 node --env-file=.env scripts/apply-migration.mjs migrations/002_resource_help_video.sql
+node --env-file=.env scripts/apply-migration.mjs migrations/003_resource_capacity.sql
 ```
 
 Each migration is idempotent and runs in one transaction, so re-running it is harmless and a
