@@ -143,6 +143,29 @@ export const ADMIN_COOKIE = "classgate_admin";
 export const STUDENT_COOKIE = "classgate_student";
 
 // ---------------------------------------------------------------------------
+// Fee-due banner (student portal)
+// ---------------------------------------------------------------------------
+
+/**
+ * How many days before a month's due date the banner starts warning about it.
+ *
+ * Without this the banner announced next month's fee the moment the current
+ * month was paid off - a student who had just paid saw "Month 2 fee is due"
+ * over a month early, which reads as a demand rather than a reminder. Seven
+ * days matches the grace period, so the student gets a week of notice and then
+ * a week of grace.
+ */
+export const FEE_BANNER_LEAD_DAYS = 7;
+
+/**
+ * sessionStorage key prefix for a banner the student has closed. Session, not
+ * local, on purpose: closing it silences that month for the rest of the visit,
+ * and the next sign-in shows it again. Cleared on logout too, so logging back
+ * in on the same device brings it back.
+ */
+export const FEE_BANNER_DISMISS_PREFIX = "fee-banner-closed:";
+
+// ---------------------------------------------------------------------------
 // Privacy Mode — hides every rupee amount across the ADMIN dashboard so the
 // tutor can screen-record the portal without showing who has paid what. The
 // student portal is never affected: a student always sees their own fee.

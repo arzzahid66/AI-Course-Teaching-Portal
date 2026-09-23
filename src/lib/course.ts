@@ -84,6 +84,12 @@ export type InvoiceView = {
   status: FeeStatus;
   /** Its due date has arrived (it may still be inside the grace period). */
   past_due: boolean;
+  /**
+   * Whole days from today (Asia/Karachi) to the due date. Negative once the
+   * due date has passed. Computed in SQL so "today" is always the server's
+   * Karachi date, never the student's device clock.
+   */
+  days_to_due: number;
   /** Unpaid past the grace period — blocks check-in. */
   blocks: boolean;
   note: string | null;
@@ -101,6 +107,7 @@ type InvoiceSqlRow = {
   paid: string;
   past_due: boolean;
   past_grace: boolean;
+  days_to_due: number;
   note: string | null;
 };
 
@@ -127,6 +134,7 @@ function toInvoiceView(r: InvoiceSqlRow): InvoiceView {
     remaining,
     status,
     past_due: Boolean(r.past_due),
+    days_to_due: Number(r.days_to_due),
     blocks: remaining > 0 && r.past_grace,
     note: r.note,
   };
@@ -146,6 +154,7 @@ export async function loadInvoices(opts: {
       i.amount, i.discount, i.note,
       COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id), 0) AS paid,
       (i.due_date <= (now() AT TIME ZONE 'Asia/Karachi')::date) AS past_due,
+      (i.due_date - (now() AT TIME ZONE 'Asia/Karachi')::date) AS days_to_due,
       ((GREATEST(i.due_date, (e.joined_at AT TIME ZONE 'Asia/Karachi')::date) + b.grace_days)
         < (now() AT TIME ZONE 'Asia/Karachi')::date) AS past_grace
     FROM fee_invoices i
@@ -172,7 +181,8 @@ export async function getBlockingInvoice(studentId: number): Promise<InvoiceView
       i.amount, i.discount, i.note,
       COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id), 0) AS paid,
       true AS past_due,
-      true AS past_grace
+      true AS past_grace,
+      (i.due_date - (now() AT TIME ZONE 'Asia/Karachi')::date) AS days_to_due
     FROM fee_invoices i
     JOIN enrollments e ON e.id = i.enrollment_id
     JOIN batches b ON b.id = e.batch_id

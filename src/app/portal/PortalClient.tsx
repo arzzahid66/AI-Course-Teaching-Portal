@@ -28,6 +28,7 @@ import {
   FeeBlockedCard,
   FeesTab,
   FeeDueBanner,
+  clearFeeBannerDismissals,
   HomeworkTab,
   NotEnrolledCard,
   ProgressTab,
@@ -120,7 +121,14 @@ export default function PortalClient({
           >
             👤 Teachers
           </button>
-          <button onClick={() => studentLogout()} className="text-sm text-slate-500 underline">
+          <button
+            onClick={() => {
+              // A closed fee banner is silenced for the visit, not for good.
+              clearFeeBannerDismissals();
+              studentLogout();
+            }}
+            className="text-sm text-slate-500 underline"
+          >
             Log out
           </button>
         </div>

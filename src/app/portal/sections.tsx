@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   setVideoWatched,
@@ -8,6 +8,7 @@ import {
   type PortalData,
   type PortalWeekend,
 } from "@/actions/student";
+import { FEE_BANNER_DISMISS_PREFIX, FEE_BANNER_LEAD_DAYS } from "@/lib/constants";
 
 // ---------------------------------------------------------------------------
 // Shared bits
@@ -227,14 +228,69 @@ export function FeeBlockedCard({
  * the moment money is owed rather than waiting for the due date, and why it
  * cannot be dismissed.
  */
+/**
+ * Forget every closed fee banner. Called on logout so signing back in on the
+ * same device shows the reminder again.
+ */
+export function clearFeeBannerDismissals(): void {
+  try {
+    for (const k of Object.keys(sessionStorage)) {
+      if (k.startsWith(FEE_BANNER_DISMISS_PREFIX)) sessionStorage.removeItem(k);
+    }
+  } catch {
+    // Storage blocked (private mode). Nothing was saved, so nothing to clear.
+  }
+}
+
+/**
+ * Fee reminder pinned above every portal tab.
+ *
+ * Three rules decide whether it shows at all:
+ *
+ *   * **Not more than FEE_BANNER_LEAD_DAYS before the due date.** Without this
+ *     the banner announced next month the instant the current month was paid
+ *     off - a student who had just paid saw "Month 2 fee is due" a month
+ *     early, which reads as a demand rather than a reminder.
+ *   * **Not for a month that already blocks the account** - by then
+ *     getAccountLock() has taken the whole portal over and says it far more
+ *     plainly than a banner could.
+ *   * **Not if the student closed it this visit.** Closing is session-scoped
+ *     on purpose: the fee can be set aside for now, but the next sign-in
+ *     brings it back. It is never dismissed for good.
+ */
 export function FeeDueBanner({ data, onPay }: { data: PortalData; onPay: () => void }) {
   // The soonest month they still owe on: the one that will lock them out first.
-  const owing = data.fees.invoices
-    .filter((i) => i.remaining > 0 && !i.blocks)
-    .sort((a, b) => a.due_date.localeCompare(b.due_date));
-  if (owing.length === 0) return null;
+  const next =
+    data.fees.invoices
+      .filter((i) => i.remaining > 0 && !i.blocks && i.days_to_due <= FEE_BANNER_LEAD_DAYS)
+      .sort((a, b) => a.due_date.localeCompare(b.due_date))[0] ?? null;
 
-  const next = owing[0];
+  const key = next === null ? null : `${FEE_BANNER_DISMISS_PREFIX}${next.id}`;
+
+  // sessionStorage does not exist while this renders on the server, so for one
+  // frame we do not know whether it was closed. Show nothing rather than flash
+  // a banner the student has already dismissed.
+  const [closed, setClosed] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (key === null) return;
+    try {
+      setClosed(sessionStorage.getItem(key) === "1");
+    } catch {
+      setClosed(false); // Storage blocked - better to show it than to hide it.
+    }
+  }, [key]);
+
+  function close() {
+    try {
+      if (key) sessionStorage.setItem(key, "1");
+    } catch {
+      // Cannot remember it; it simply comes back on the next page load.
+    }
+    setClosed(true);
+  }
+
+  if (next === null || closed !== false) return null;
+
   const urgent = next.past_due;
 
   return (
@@ -243,11 +299,23 @@ export function FeeDueBanner({ data, onPay }: { data: PortalData; onPay: () => v
         urgent ? "bg-amber-50 ring-amber-300" : "bg-brand-50 ring-brand-200"
       }`}
     >
-      <p className={`text-sm font-bold ${urgent ? "text-amber-900" : "text-brand-800"}`}>
-        {urgent ? "⏳ Grace period — fee pending" : "💳 Fee due"}
-      </p>
+      <div className="flex items-start justify-between gap-3">
+        <p className={`text-sm font-bold ${urgent ? "text-amber-900" : "text-brand-800"}`}>
+          {urgent ? "\u23F3 Grace period \u2014 fee pending" : "\u{1F4B3} Fee due"}
+        </p>
+        <button
+          onClick={close}
+          aria-label="Close"
+          title="Close - it shows again next time you sign in"
+          className={`-mr-1 -mt-0.5 shrink-0 rounded-lg px-2 py-0.5 text-lg leading-none active:scale-90 transition ${
+            urgent ? "text-amber-700 hover:bg-amber-100" : "text-brand-700 hover:bg-brand-100"
+          }`}
+        >
+          {"\u00D7"}
+        </button>
+      </div>
       <p className={`text-sm mt-1 ${urgent ? "text-amber-900" : "text-slate-700"}`}>
-        Month {next.month_no} fee {"—"} <b>{rs(next.remaining)}</b>{" "}
+        Month {next.month_no} fee {"\u2014"} <b>{rs(next.remaining)}</b>{" "}
         {urgent
           ? `is unpaid. It was due on ${fmtDay(next.due_date, true)}.`
           : `is due on ${fmtDay(next.due_date, true)}.`}{" "}

@@ -214,10 +214,14 @@ function agoLabel(seconds: number): string {
 }
 
 /**
- * Auto-refresh is invisible by nature, so this says it out loud. Without it
- * the tutor cannot tell a live page from a stale one and presses F5 anyway -
- * which is the exact complaint this strip exists to answer. The button is here
- * for the moments they do not want to wait for the next tick.
+ * Auto-refresh is invisible by nature, so this toolbar says it out loud: how
+ * often the board re-checks itself, how long ago it last did, and a button to
+ * do it right now.
+ *
+ * It is a solid, full-size button on a tinted bar on purpose. The first
+ * version was a small outline button inside a thin grey line of text and the
+ * tutor did not see it at all - they kept reaching for F5, which is the exact
+ * thing this is here to replace.
  */
 function SyncBar({
   onRefresh,
@@ -253,14 +257,19 @@ function SyncBar({
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 mb-3 text-xs text-slate-500">
-      <span>
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-slate-50 ring-1 ring-slate-200 px-4 py-2.5">
+      <span className="text-xs text-slate-500">
         <span className="text-emerald-500">{"●"}</span> Updates on its own every{" "}
         {Math.round(pollMs / 1000)}s
         {ago !== null && ` · checked ${ago < 5 ? "just now" : agoLabel(ago) + " ago"}`}
       </span>
-      <button onClick={manual} disabled={busy} className={btn.small}>
-        {busy ? "Refreshing…" : "↻ Refresh now"}
+      <button
+        onClick={manual}
+        disabled={busy}
+        className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white active:scale-[0.97] transition disabled:opacity-60"
+      >
+        <span className={`inline-block ${busy ? "animate-spin" : ""}`}>{"↻"}</span>
+        {busy ? "Refreshing…" : "Refresh now"}
       </button>
     </div>
   );
