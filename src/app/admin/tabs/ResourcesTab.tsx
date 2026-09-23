@@ -7,13 +7,21 @@ import {
   dismissLoginCode,
   reviewResourceRequest,
   saveResource,
+  saveToolsHelpVideo,
   sendLoginCode,
 } from "@/actions/resources";
-import type { RequestRow, ResourceBoard, ResourceRow } from "@/lib/resources";
+import type {
+  RequestRow,
+  ResourceBoard,
+  ResourceRow,
+  ToolsHelpVideo,
+} from "@/lib/resources";
 import {
   RESOURCE_DEFAULT_AHEAD_DAYS,
   RESOURCE_DEFAULT_COOLDOWN_H,
   RESOURCE_DEFAULT_MAX_MIN,
+  normalizeUrl,
+  youtubeThumbUrl,
 } from "@/lib/constants";
 import {
   Card,
@@ -76,6 +84,8 @@ export default function ResourcesTab({
   return (
     <>
       <SyncBar onRefresh={onRefresh} syncedAt={syncedAt} pollMs={pollMs} />
+
+      <HelpVideoCard video={board.helpVideo} />
 
       {/* The most time-sensitive thing on the page: a student is sitting on the
           claude.ai code screen right now, waiting. It goes above everything. */}
@@ -204,6 +214,92 @@ export default function ResourcesTab({
         />
       )}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The one walkthrough video students see
+// ---------------------------------------------------------------------------
+
+/**
+ * Sits in plain sight near the top of the Tools tab, not inside a modal.
+ *
+ * The first version of this was a field inside each tool's Edit dialog, and
+ * the tutor could not find it - reasonably, since it is a setting for the
+ * whole section rather than a property of one tool. One video covers the whole
+ * flow anyway: book a slot, ask for the sign-in code, hand the tool back.
+ */
+function HelpVideoCard({ video }: { video: ToolsHelpVideo | null }) {
+  const save = useAction();
+  const thumb = video ? youtubeThumbUrl(video.url) : null;
+  const labelClass = "block text-xs font-medium text-slate-500 mb-1";
+
+  return (
+    <Card>
+      <h2 className="font-bold mb-1">{"\u{1F3AC}"} Student help video</h2>
+      <p className="text-sm text-slate-500 mb-3">
+        Shown at the top of every student&apos;s Tools tab, so someone who has never
+        done this can watch before booking. Leave the link empty to remove it.
+      </p>
+
+      {video && (
+        <div className="flex items-center gap-3 mb-3 rounded-xl bg-slate-50 ring-1 ring-slate-200 p-2">
+          {thumb ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={thumb}
+              alt=""
+              className="h-14 w-24 shrink-0 rounded-lg object-cover bg-slate-200"
+            />
+          ) : (
+            <span className="grid h-14 w-24 shrink-0 place-items-center rounded-lg bg-slate-200 text-slate-500 text-xs">
+              link
+            </span>
+          )}
+          <div className="min-w-0">
+            <p className="text-sm font-semibold truncate">{video.title}</p>
+            <a
+              href={normalizeUrl(video.url)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-slate-500 underline break-all"
+            >
+              {video.url}
+            </a>
+          </div>
+        </div>
+      )}
+
+      <form
+        action={(fd) => save.run(() => saveToolsHelpVideo(fd), { success: "Saved." })}
+        className="space-y-2"
+      >
+        <label className="block">
+          <span className={labelClass}>YouTube link</span>
+          <input
+            name="url"
+            type="text"
+            inputMode="url"
+            defaultValue={video?.url ?? ""}
+            placeholder="https://www.youtube.com/watch?v=..."
+            className={fieldClass()}
+          />
+        </label>
+        <label className="block">
+          <span className={labelClass}>Title students see</span>
+          <input
+            name="title"
+            defaultValue={video?.title ?? ""}
+            placeholder="How to get Free Tools Access in ClassGate portal"
+            className={fieldClass()}
+          />
+        </label>
+        <Msg error={save.error} ok={save.ok} />
+        <button disabled={save.pending} className={btn.primary}>
+          {save.pending ? "Saving\u2026" : "Save video"}
+        </button>
+      </form>
+    </Card>
   );
 }
 

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { sql } from "@/lib/db";
 import { assertAdmin, requireStudentId } from "@/lib/auth";
-import { iso, isoOrNull } from "@/lib/course";
+import { iso, isoOrNull, setSetting } from "@/lib/course";
 import {
   checkEligibility,
   hasStartedPaying,
@@ -11,6 +11,7 @@ import {
   loadRequests,
   loadResource,
   loadResources,
+  loadToolsHelpVideo,
   validateWindow,
   type LoginCodeRow,
   type ResourceBoard,
@@ -25,6 +26,8 @@ import {
   RESOURCE_DEFAULT_AHEAD_DAYS,
   RESOURCE_DEFAULT_COOLDOWN_H,
   RESOURCE_DEFAULT_MAX_MIN,
+  TOOLS_VIDEO_TITLE_KEY,
+  TOOLS_VIDEO_URL_KEY,
   normalizeUrl,
 } from "@/lib/constants";
 
@@ -49,9 +52,10 @@ export async function getStudentResources(): Promise<StudentResourceData> {
   const studentId = await requireStudentId();
   await scrubExpiredCodes();
 
-  const [resources, mine] = await Promise.all([
+  const [resources, mine, helpVideo] = await Promise.all([
     loadResources(true),
     loadRequests({ studentId }),
+    loadToolsHelpVideo(),
   ]);
 
   // Other people's approved windows for the next week. The student's own
@@ -91,6 +95,7 @@ export async function getStudentResources(): Promise<StudentResourceData> {
   return {
     tools,
     history: mine.filter((r) => !tools.some((t) => t.mine?.id === r.id)).slice(0, 20),
+    helpVideo,
   };
 }
 
@@ -322,9 +327,10 @@ export async function getResourceBoard(): Promise<ResourceBoard> {
   await assertAdmin();
   await scrubExpiredCodes();
 
-  const [resources, requests] = await Promise.all([
+  const [resources, requests, helpVideo] = await Promise.all([
     loadResources(false),
     loadRequests({ sinceDays: 60 }),
+    loadToolsHelpVideo(),
   ]);
 
   const codes = (await sql`
@@ -351,7 +357,33 @@ export async function getResourceBoard(): Promise<ResourceBoard> {
       start_at: iso(c.start_at),
       end_at: iso(c.end_at),
     })),
+    helpVideo,
   };
+}
+
+/**
+ * Save (or clear) the one walkthrough video shown at the top of every
+ * student's Tools tab. Clearing the url turns the card off entirely.
+ */
+export async function saveToolsHelpVideo(formData: FormData): Promise<{ error?: string }> {
+  await assertAdmin();
+
+  const url = normalizeUrl(String(formData.get("url") ?? ""));
+  const title = String(formData.get("title") ?? "").trim();
+
+  if (url) {
+    try {
+      new URL(url);
+    } catch {
+      return { error: "That link does not look like a web address." };
+    }
+  }
+
+  await setSetting(TOOLS_VIDEO_URL_KEY, url);
+  await setSetting(TOOLS_VIDEO_TITLE_KEY, title);
+  revalidatePath("/admin");
+  revalidatePath("/portal");
+  return {};
 }
 
 export async function reviewResourceRequest(

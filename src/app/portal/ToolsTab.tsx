@@ -93,6 +93,19 @@ export default function ToolsTab({ data: initialData }: { data: StudentResourceD
 
   return (
     <>
+      {data.helpVideo && (
+        <Card className="ring-brand-200 bg-brand-50/40">
+          <p className="text-xs font-semibold uppercase tracking-wide text-brand-700 mb-1">
+            Start here
+          </p>
+          <HelpVideo
+            url={data.helpVideo.url}
+            title={data.helpVideo.title}
+            subtitle="Watch this first - it shows the whole thing end to end."
+          />
+        </Card>
+      )}
+
       {data.tools.map((tool) => (
         <ToolCard key={tool.resource.id} tool={tool} />
       ))}
@@ -154,7 +167,12 @@ function ToolCard({ tool }: { tool: StudentResourceView }) {
       {resource.blurb && <p className="text-sm text-slate-600 mt-1">{resource.blurb}</p>}
 
       {resource.help_video_url && (
-        <HelpVideo url={resource.help_video_url} toolName={resource.name} />
+        <div className="mt-3">
+          <HelpVideo
+            url={resource.help_video_url}
+            title={`How to get and use ${resource.name}`}
+          />
+        </div>
       )}
 
       {isLive && mine ? (
@@ -199,13 +217,21 @@ function ToolCard({ tool }: { tool: StudentResourceView }) {
  * embedded, so it degrades to the same card as an outward link rather than
  * disappearing.
  */
-function HelpVideo({ url, toolName }: { url: string; toolName: string }) {
+function HelpVideo({
+  url,
+  title,
+  subtitle = "New to this? Watch the short video first.",
+}: {
+  url: string;
+  title: string;
+  subtitle?: string;
+}) {
   const [open, setOpen] = useState(false);
   const embed = youtubeEmbedUrl(url);
   const link = normalizeUrl(url);
 
   const chrome =
-    "mt-3 flex w-full items-center gap-3 rounded-xl bg-slate-50 ring-1 ring-slate-200 px-3 py-2.5 text-left active:scale-[0.99] transition";
+    "flex w-full items-center gap-3 rounded-xl bg-slate-50 ring-1 ring-slate-200 px-3 py-2.5 text-left active:scale-[0.99] transition";
   const play = (
     <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-red-600 text-white">
       {"\u25B6"}
@@ -213,12 +239,8 @@ function HelpVideo({ url, toolName }: { url: string; toolName: string }) {
   );
   const caption = (
     <span className="min-w-0">
-      <span className="block text-sm font-semibold text-slate-800">
-        How to get and use {toolName}
-      </span>
-      <span className="block text-xs text-slate-500">
-        New to this? Watch the short video first.
-      </span>
+      <span className="block text-sm font-semibold text-slate-800">{title}</span>
+      <span className="block text-xs text-slate-500">{subtitle}</span>
     </span>
   );
 
@@ -241,11 +263,11 @@ function HelpVideo({ url, toolName }: { url: string; toolName: string }) {
   }
 
   return (
-    <div className="mt-3">
+    <div>
       <div className="aspect-video w-full overflow-hidden rounded-xl bg-black ring-1 ring-slate-200">
         <iframe
           src={embed}
-          title={`How to get and use ${toolName}`}
+          title={title}
           allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
           allowFullScreen
           className="h-full w-full"

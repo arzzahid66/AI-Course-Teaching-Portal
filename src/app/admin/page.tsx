@@ -93,7 +93,7 @@ export default async function AdminPage({
     settle(getQuizScoreboard(), { quizzes: [], students: [], scores: {} }),
     settle(getQuizLeaderboard(), { quizzes: [], byQuiz: {} }),
     settle(getLoginLogs(), []),
-    settle(getResourceBoard(), { resources: [], requests: [], codeRequests: [] }),
+    settle(getResourceBoard(), { resources: [], requests: [], codeRequests: [], helpVideo: null }),
     settle(getPrivacyMode(), false),
   ]);
 

@@ -32,6 +32,27 @@ export function normalizeUrl(raw: string | null | undefined): string {
  * and this way YouTube sets no tracking cookie unless they actually press play.
  */
 export function youtubeEmbedUrl(raw: string | null | undefined): string | null {
+  const id = youtubeVideoId(raw);
+  if (!id) return null;
+
+  const t = new URL(normalizeUrl(raw)).searchParams;
+  const start = t.get("t") ?? t.get("start") ?? "";
+  const secs = /^(\d+)s?$/.exec(start)?.[1] ?? "";
+
+  return `https://www.youtube-nocookie.com/embed/${id}${secs ? `?start=${secs}` : ""}`;
+}
+
+/** Poster frame for a YouTube link, or null when it is not one. @see youtubeVideoId */
+export function youtubeThumbUrl(raw: string | null | undefined): string | null {
+  const id = youtubeVideoId(raw);
+  return id ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : null;
+}
+
+/**
+ * The video id inside a pasted YouTube link, or null when it is not YouTube.
+ * @see youtubeEmbedUrl for which link shapes are accepted and why.
+ */
+export function youtubeVideoId(raw: string | null | undefined): string | null {
   const link = normalizeUrl(raw);
   if (!link) return null;
 
@@ -59,10 +80,7 @@ export function youtubeEmbedUrl(raw: string | null | undefined): string | null {
   // rule we have to revisit; the character class is the part that matters.
   if (!/^[A-Za-z0-9_-]{8,16}$/.test(id)) return null;
 
-  const t = u.searchParams.get("t") ?? u.searchParams.get("start") ?? "";
-  const secs = /^(\d+)s?$/.exec(t)?.[1] ?? "";
-
-  return `https://www.youtube-nocookie.com/embed/${id}${secs ? `?start=${secs}` : ""}`;
+  return id;
 }
 
 /** Alias kept for the class / Google Meet check-in link. @see normalizeUrl */
@@ -220,6 +238,19 @@ export const FEE_BANNER_DISMISS_PREFIX = "fee-banner-closed:";
 // tutor can screen-record the portal without showing who has paid what. The
 // student portal is never affected: a student always sees their own fee.
 // ---------------------------------------------------------------------------
+
+/**
+ * `app_settings` keys for the one "how the Tools section works" video the
+ * tutor records for the whole class.
+ *
+ * Section-level, not per tool: the flow a student has to learn - book a slot,
+ * ask for the sign-in code, hand the tool back - is the same whichever tool
+ * they booked, so one recording covers all of them. (Each tool can still carry
+ * its own clip in `shared_resources.help_video_url` when one tool genuinely
+ * needs different instructions.)
+ */
+export const TOOLS_VIDEO_URL_KEY = "tools_help_video_url";
+export const TOOLS_VIDEO_TITLE_KEY = "tools_help_video_title";
 
 /** `app_settings` key holding "on" / "off" for admin-side Privacy Mode. */
 export const PRIVACY_MODE_KEY = "privacy_mode";

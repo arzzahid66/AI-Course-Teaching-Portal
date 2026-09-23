@@ -22,7 +22,7 @@ export default async function PortalPage() {
     // The Tools tab must never be able to take the whole portal down.
     getStudentResources().catch((e) => {
       console.error("[portal] tools load failed:", e);
-      return { tools: [], history: [] };
+      return { tools: [], history: [], helpVideo: null };
     }),
   ]);
   return <PortalClient data={data} resources={resources} />;

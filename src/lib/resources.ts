@@ -1,6 +1,7 @@
 import "server-only";
 import { sql } from "@/lib/db";
-import { iso, isoOrNull } from "@/lib/course";
+import { getSetting, iso, isoOrNull } from "@/lib/course";
+import { TOOLS_VIDEO_TITLE_KEY, TOOLS_VIDEO_URL_KEY } from "@/lib/constants";
 
 // ---------------------------------------------------------------------------
 // Shared tools (the Claude Code Pro plan, the OpenAI API key) that students
@@ -288,9 +289,13 @@ export type StudentResourceView = {
   busy: { start_at: string; end_at: string }[];
 };
 
+/** The tutor's one walkthrough video for the whole Tools section. */
+export type ToolsHelpVideo = { url: string; title: string };
+
 export type StudentResourceData = {
   tools: StudentResourceView[];
   history: RequestRow[];
+  helpVideo: ToolsHelpVideo | null;
 };
 
 /** Everything the admin Tools tab needs. */
@@ -307,4 +312,21 @@ export type ResourceBoard = {
     start_at: string;
     end_at: string;
   }[];
+  helpVideo: ToolsHelpVideo | null;
 };
+
+/**
+ * The Tools walkthrough video, or null when the tutor has not recorded one.
+ *
+ * A row with an empty url counts as "none": clearing the field in the admin
+ * form should turn the card off, not leave a broken player behind.
+ */
+export async function loadToolsHelpVideo(): Promise<ToolsHelpVideo | null> {
+  const [url, title] = await Promise.all([
+    getSetting(TOOLS_VIDEO_URL_KEY),
+    getSetting(TOOLS_VIDEO_TITLE_KEY),
+  ]);
+  const link = (url ?? "").trim();
+  if (!link) return null;
+  return { url: link, title: (title ?? "").trim() || "How the shared tools work" };
+}
