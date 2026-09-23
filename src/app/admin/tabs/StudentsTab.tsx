@@ -127,14 +127,39 @@ export default function StudentsTab({
             </select>
           </label>
           {payNow === "month1" || payNow === "full" ? (
-            <div className="grid grid-cols-2 gap-2">
-              <select name="method" className={fieldClass()} defaultValue="EasyPaisa">
-                <option>EasyPaisa</option>
-                <option>JazzCash</option>
-                <option>Bank</option>
-                <option>Cash</option>
-              </select>
-              <input name="reference" placeholder="Transaction ID" className={fieldClass()} />
+            /* Both of these go straight into the student's receipt email, so
+               neither may be guessed. The method used to default to EasyPaisa
+               and was easy to skip past, which sent "paid by EasyPaisa" to a
+               student who had actually sent a bank transfer. */
+            <div className="grid grid-cols-2 gap-2 sm:col-span-2">
+              <label className="block">
+                <span className="block text-xs font-medium text-slate-500 mb-1">
+                  How did they pay?
+                </span>
+                <select name="method" required defaultValue="" className={fieldClass()}>
+                  <option value="" disabled>
+                    Choose a method
+                  </option>
+                  <option>EasyPaisa</option>
+                  <option>JazzCash</option>
+                  <option>Bank</option>
+                  <option>Cash</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="block text-xs font-medium text-slate-500 mb-1">
+                  Transaction ID
+                </span>
+                <input
+                  name="reference"
+                  placeholder="From the EasyPaisa / bank SMS"
+                  className={fieldClass()}
+                />
+              </label>
+              <p className="text-xs text-slate-400 sm:col-span-2">
+                Both appear on the student&apos;s receipt email. Cash has no
+                transaction ID {"—"} leave it empty.
+              </p>
             </div>
           ) : (
             <p className="text-xs text-slate-500 self-end pb-2">

@@ -150,6 +150,9 @@ async function enroll(studentId: number, batchId: number): Promise<number> {
  * "month1" / "full" record a payment straight away, "free" waives every month,
  * "none" leaves the fees unpaid. Optionally emails them a welcome message.
  */
+/** Methods the receipt email may name. Kept in step with the Add student form. */
+const PAYMENT_METHODS = ["EasyPaisa", "JazzCash", "Bank", "Cash"];
+
 export async function addStudent(formData: FormData): Promise<{ error?: string; receiptNo?: string }> {
   await assertAdmin();
   const name = String(formData.get("name") ?? "").trim();
@@ -159,11 +162,17 @@ export async function addStudent(formData: FormData): Promise<{ error?: string; 
   const password = String(formData.get("password") ?? "");
   const batchId = Number(formData.get("batch_id"));
   const payNow = String(formData.get("pay_now") ?? "none");
-  const method = String(formData.get("method") ?? "EasyPaisa").trim() || "EasyPaisa";
+  const method = String(formData.get("method") ?? "").trim();
   const reference = String(formData.get("reference") ?? "").trim();
 
   if (!name) return { error: "Name is required." };
   if (!batchId) return { error: "Pick the intake this student is joining." };
+  // The method is printed in the student's receipt email, so it has to be the
+  // one they actually used. It used to default to EasyPaisa silently, which
+  // told bank payers the wrong thing.
+  if ((payNow === "month1" || payNow === "full") && !PAYMENT_METHODS.includes(method)) {
+    return { error: "Pick how the student paid." };
+  }
   if (email && password.length < 4) return { error: "Password must be at least 4 characters." };
 
   const created = await insertStudent({

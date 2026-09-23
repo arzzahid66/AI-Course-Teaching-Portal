@@ -5,11 +5,32 @@ import { queueStudentEmail } from "@/lib/email";
 
 const rs = (n: number) => `Rs ${n.toLocaleString("en-PK")}`;
 
+/** "2026-10-27" -> "Tue, 27 Oct 2026". Date-only, so no timezone shift. */
+function day(ymd: string): string {
+  const [y, m, d] = ymd.slice(0, 10).split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-GB", {
+    timeZone: "UTC",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 /**
  * Confirm a payment to the student: what was received, which months it covers,
  * and whether anything is still left. Sent from every place a payment is
  * recorded — the Fees tab, a new student added as paid, and the bulk import —
  * so "paid" always reaches the student the same way.
+ *
+ * What is still owed is stated exactly ONCE, in the closing section. An
+ * earlier version repeated it three times - in the greeting, in the receipt
+ * box and again at the end - which turned a thank-you into a chase. A receipt
+ * is confirmation first; the reminder belongs at the bottom.
+ *
+ * The number of fee months is spelled out for the same reason: a student who
+ * has just paid "the fee" needs to know the intake runs for more than one
+ * month, or a second invoice looks like a mistake.
  */
 export async function queuePaymentReceiptEmail(receiptNo: string): Promise<void> {
   const rows = (await sql`
@@ -38,6 +59,12 @@ export async function queuePaymentReceiptEmail(receiptNo: string): Promise<void>
   const remaining = invoices.reduce((s, i) => s + i.remaining, 0);
   const nextDue = invoices.find((i) => i.remaining > 0) ?? null;
 
+  const totalMonths = invoices.length;
+  const monthsLabel =
+    totalMonths > 0
+      ? `Month${months.length > 1 ? "s" : ""} paid: ${months.join(", ")} of ${totalMonths}`
+      : `Month${months.length > 1 ? "s" : ""} paid: ${months.join(", ")}`;
+
   queueStudentEmail(row.student_id, {
     subject: `Payment confirmed — receipt ${receiptNo}`,
     heading: "Payment verified ✅",
@@ -45,7 +72,7 @@ export async function queuePaymentReceiptEmail(receiptNo: string): Promise<void>
       `We have checked and confirmed your payment of ${rs(amount)} by ${row.method}. Thank you!`,
       remaining === 0
         ? "Your fees are fully cleared. Your account stays active for the whole course."
-        : `Your account is active. ${rs(remaining)} is still left to pay.`,
+        : "Your account is active.",
       "You can see every receipt any time in the Fees section of the portal.",
     ],
     sections: [
@@ -56,20 +83,26 @@ export async function queuePaymentReceiptEmail(receiptNo: string): Promise<void>
           `Amount: ${rs(amount)}`,
           `Method: ${row.method}`,
           ...(row.reference ? [`Transaction ID: ${row.reference}`] : []),
-          `Month${months.length > 1 ? "s" : ""} paid: ${months.join(", ")}`,
-          `Status: ${remaining === 0 ? "Fully paid" : `${rs(remaining)} remaining`}`,
+          monthsLabel,
         ],
         tone: "success",
       },
+      // The one and only mention of what is still owed.
       ...(nextDue
         ? [
             {
-              title: "Next payment",
+              title: "Still to pay",
               lines: [
+                totalMonths > 1
+                  ? `This course runs for ${totalMonths} months, so the fee is charged ${totalMonths} times.`
+                  : "",
                 `Month ${nextDue.month_no}: ${rs(nextDue.remaining)}`,
-                `Due: ${nextDue.due_date}`,
-                `Please pay by ${nextDue.grace_until} to keep your account active.`,
-              ],
+                `Due: ${day(nextDue.due_date)}`,
+                `Please pay by ${day(nextDue.grace_until)} to keep your account active.`,
+                remaining > nextDue.remaining
+                  ? `Left after that: ${rs(remaining - nextDue.remaining)}.`
+                  : "",
+              ].filter(Boolean),
               tone: "neutral" as const,
             },
           ]
