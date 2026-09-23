@@ -79,10 +79,10 @@ INSERT INTO shared_resources (name, blurb, handover_note, max_minutes, cooldown_
 VALUES
   ('Claude Code Pro',
    'Shared Claude Code Pro plan. Claude allows a rolling 5-hour usage window, so one booking is at most 5 hours.',
-   'Slot ke doran is page se login code mangwayein — tutor turant bhej dega. Password kabhi share nahi hoga.',
+   'Ask for the sign-in code from this page during your slot - your tutor sends it straight away. The password is never shared.',
    300, 24, 0),
   ('OpenAI API key',
    'Shared OpenAI API key for practice. Keep your spending small and stop as soon as your slot ends.',
-   'Key WhatsApp par milegi. Slot khatam hote hi use karna band kar dein.',
+   'The key is sent to you on WhatsApp. Stop using it as soon as your slot ends.',
    180, 24, 1)
 ON CONFLICT DO NOTHING;

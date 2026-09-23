@@ -64,8 +64,8 @@ export default function ResourcesTab({ board }: { board: ResourceBoard }) {
             {"\u{1F511}"} Sign-in code needed ({board.codeRequests.length})
           </h2>
           <p className="text-sm text-amber-800 mb-3">
-            Gmail kholein {"→"} Anthropic ki email mein <b>Sign in</b> dabayein {"→"} jo
-            code claude.ai dikhaye wo yahan paste karein.
+            Open Gmail {"→"} click <b>Sign in</b> in the Anthropic email {"→"} paste the
+            code claude.ai shows you here.
           </p>
           <ul className="divide-y divide-amber-200">
             {board.codeRequests.map((c) => (
@@ -393,7 +393,7 @@ function ResourceModal({
             name="handover_note"
             rows={2}
             defaultValue={resource?.handover_note ?? ""}
-            placeholder="e.g. Slot ke doran portal se login code mangwayein."
+            placeholder="e.g. Ask for the sign-in code from the portal during your slot."
             className={fieldClass()}
           />
         </label>

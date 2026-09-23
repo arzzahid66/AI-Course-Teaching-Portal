@@ -34,16 +34,24 @@ function hoursLabel(minutes: number): string {
   return h === 1 ? "1 hour" : `${Number.isInteger(h) ? h : h.toFixed(1)} hours`;
 }
 
-/** "4h 37m" / "9:58" — a plain countdown to `target`. */
+/**
+ * "2d 4h" / "4h 37m" / "18m 48s" - a countdown to `target`.
+ *
+ * Units are always spelled out. A bare "18:48" reads as a clock time, and a
+ * student glancing at "starts in 18:48" will think 6:48 pm rather than in
+ * eighteen minutes.
+ */
 function countdown(target: string, now: number): string {
   const ms = new Date(target).getTime() - now;
-  if (ms <= 0) return "0:00";
+  if (ms <= 0) return "0m 0s";
   const total = Math.floor(ms / 1000);
-  const h = Math.floor(total / 3600);
+  const d = Math.floor(total / 86400);
+  const h = Math.floor((total % 86400) / 3600);
   const m = Math.floor((total % 3600) / 60);
   const sec = total % 60;
+  if (d > 0) return `${d}d ${h}h`;
   if (h > 0) return `${h}h ${m}m`;
-  return `${m}:${String(sec).padStart(2, "0")}`;
+  return `${m}m ${sec}s`;
 }
 
 /** A clock that ticks once a second, so countdowns stay honest. */
@@ -150,6 +158,52 @@ function ToolCard({ tool }: { tool: StudentResourceView }) {
   );
 }
 
+/**
+ * The three things a student must do on claude.ai, in order. Shown live during
+ * a slot, and as a greyed-out preview beforehand so nothing is a surprise when
+ * the clock starts - the ordering is the whole ballgame, because Anthropic's
+ * sign-in link dies 10 minutes after it is sent.
+ */
+function SignInSteps({
+  onCopyEmail,
+  copiedEmail,
+  muted = false,
+}: {
+  onCopyEmail?: () => void;
+  copiedEmail?: boolean;
+  muted?: boolean;
+}) {
+  return (
+    <ol className={`text-sm space-y-1.5 ${muted ? "text-slate-600" : "text-emerald-900"}`}>
+      <li>
+        <b>1.</b> Open claude.ai/login
+      </li>
+      <li className="flex flex-wrap items-center gap-2">
+        <span>
+          <b>2.</b> Enter this email:
+        </span>
+        <code className="rounded-lg bg-white px-2 py-1 text-xs">{CLAUDE_LOGIN_EMAIL}</code>
+        {onCopyEmail && (
+          <button
+            onClick={onCopyEmail}
+            className="text-xs rounded-lg border border-emerald-300 px-2 py-1"
+          >
+            {copiedEmail ? "Copied" : "Copy"}
+          </button>
+        )}
+      </li>
+      <li>
+        <b>3.</b> You will see an &quot;enter code&quot; screen —{" "}
+        <b className={muted ? "text-slate-700" : "text-rose-700"}>stay on it</b>, do not close
+        it.
+      </li>
+      <li>
+        <b>4.</b> Come back here and ask for the code.
+      </li>
+    </ol>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Waiting states
 // ---------------------------------------------------------------------------
@@ -200,6 +254,25 @@ function UpcomingSlot({
       <p className="text-xs text-emerald-800 mt-0.5">
         {fmtWhen(request.start_at)} {"→"} {fmtWhen(request.end_at)}
       </p>
+
+      {/* Without this the card is a dead end: the student is told they are
+          booked and nothing about what to do with that. */}
+      <div className="mt-2.5 rounded-lg bg-white px-3 py-2.5">
+        <p className="text-sm font-semibold text-slate-800">What to do now</p>
+        <p className="text-xs text-slate-600 mt-0.5">
+          Nothing yet. Open this page again at <b>{fmtWhen(request.start_at)}</b> — that is
+          when you can ask for the sign-in code.
+        </p>
+        <details className="mt-2">
+          <summary className="text-xs text-brand-700 cursor-pointer select-none">
+            See what you will need to do
+          </summary>
+          <div className="mt-2">
+            <SignInSteps muted />
+          </div>
+        </details>
+      </div>
+
       {resource.handover_note && (
         <p className="text-xs text-emerald-900 mt-2">{resource.handover_note}</p>
       )}
@@ -268,7 +341,7 @@ function LiveSlot({
       setCopied(what);
       setTimeout(() => setCopied(null), 1500);
     } catch {
-      setError("Copy nahi hua — haath se likh lein.");
+      setError("Could not copy — please type it by hand.");
     }
   }
 
@@ -287,14 +360,14 @@ function LiveSlot({
 
       {endingSoon && (
         <p className="mt-2 rounded-lg bg-rose-100 text-rose-800 text-xs px-2 py-1.5">
-          Slot khatam hone wala hai — apna kaam save karein aur log out kar dein.
+          Your slot is almost over — save your work and log out.
         </p>
       )}
 
       {ready && code ? (
         <div className="mt-3">
           <p className="text-xs text-emerald-900 mb-1">
-            Ye code us claude.ai screen par lagayein jo pehle se khuli hai:
+            Enter this code on the claude.ai screen you already have open:
           </p>
           <div className="flex items-center gap-2">
             <p className="flex-1 rounded-xl bg-white px-3 py-2.5 text-2xl font-bold tracking-widest tabular-nums text-center">
@@ -308,7 +381,7 @@ function LiveSlot({
             </button>
           </div>
           <p className="text-xs text-rose-700 mt-1.5">
-            Jaldi lagayein — {code.expires_at ? countdown(code.expires_at, now) : "thori der"} baqi.
+            Use it quickly — {code.expires_at ? countdown(code.expires_at, now) : "a little time"} left.
           </p>
           <button
             disabled={busy}
@@ -326,9 +399,9 @@ function LiveSlot({
         </div>
       ) : waiting && code ? (
         <div className="mt-3 rounded-xl bg-white px-3 py-3 text-center">
-          <p className="text-sm font-semibold text-slate-700">Tutor ko bata diya</p>
+          <p className="text-sm font-semibold text-slate-700">Your tutor has been told</p>
           <p className="text-xs text-slate-500 mt-0.5">
-            Code aa raha hai — ye page khula rakhein.
+            The code is on its way — keep this page open.
           </p>
           <button
             disabled={busy}
@@ -345,27 +418,10 @@ function LiveSlot({
         </div>
       ) : (
         <div className="mt-3">
-          <ol className="text-sm text-emerald-900 space-y-1.5">
-            <li>
-              <b>1.</b> claude.ai/login kholein
-            </li>
-            <li className="flex flex-wrap items-center gap-2">
-              <span>
-                <b>2.</b> Ye email daalein:
-              </span>
-              <code className="rounded-lg bg-white px-2 py-1 text-xs">{CLAUDE_LOGIN_EMAIL}</code>
-              <button
-                onClick={() => copy(CLAUDE_LOGIN_EMAIL, "email")}
-                className="text-xs rounded-lg border border-emerald-300 px-2 py-1"
-              >
-                {copied === "email" ? "Copied" : "Copy"}
-              </button>
-            </li>
-            <li>
-              <b>3.</b> &quot;enter code&quot; screen aayega —{" "}
-              <b className="text-rose-700">usi screen par rukein</b>, band na karein.
-            </li>
-          </ol>
+          <SignInSteps
+            onCopyEmail={() => copy(CLAUDE_LOGIN_EMAIL, "email")}
+            copiedEmail={copied === "email"}
+          />
 
           {/* Anthropic's sign-in link dies 10 minutes after it is sent, so a
               student who asks first and fumbles step 1 burns the code. */}
@@ -376,7 +432,7 @@ function LiveSlot({
               onChange={(e) => setConfirmed(e.target.checked)}
               className="mt-0.5 h-4 w-4"
             />
-            <span>Main &quot;enter code&quot; screen par hoon</span>
+            <span>I am on the &quot;enter code&quot; screen</span>
           </label>
 
           <button
@@ -443,13 +499,13 @@ function BookingForm({ resource }: { resource: StudentResourceView["resource"] }
     >
       <label className="block">
         <span className="block text-xs font-medium text-slate-500 mb-1">
-          Aap ise kis kaam ke liye use karenge?
+          What will you use it for?
         </span>
         <textarea
           name="reason"
           rows={2}
           required
-          placeholder="e.g. Project B ka RAG chatbot banana hai"
+          placeholder="e.g. Building the RAG chatbot for Project B"
           className="w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-brand-500"
         />
       </label>
@@ -465,7 +521,7 @@ function BookingForm({ resource }: { resource: StudentResourceView["resource"] }
           />
         </label>
         <label className="block">
-          <span className="block text-xs font-medium text-slate-500 mb-1">Kitni der</span>
+          <span className="block text-xs font-medium text-slate-500 mb-1">How long</span>
           <select
             name="minutes"
             defaultValue={String(durations[durations.length - 1] ?? 60)}
@@ -487,10 +543,10 @@ function BookingForm({ resource }: { resource: StudentResourceView["resource"] }
         disabled={busy}
         className="w-full rounded-xl bg-brand-600 text-white font-semibold py-2.5 disabled:opacity-50"
       >
-        {busy ? "Bhej rahe hain…" : "Request this slot"}
+        {busy ? "Sending…" : "Request this slot"}
       </button>
       <p className="text-xs text-slate-400">
-        Tutor approve karega. Ek waqt mein sirf ek student ko milta hai.
+        Your tutor approves it. Only one student can use it at a time.
       </p>
     </form>
   );

@@ -53,10 +53,14 @@ export async function getStudentResources(): Promise<StudentResourceData> {
     loadRequests({ studentId }),
   ]);
 
+  // Other people's approved windows for the next week. The student's own
+  // booking is excluded: it already has its own card above, and listing it
+  // again under "Already booked" reads like someone else took the slot.
   const busy = (await sql`
     SELECT resource_id, start_at, end_at
     FROM resource_requests
     WHERE status = 'approved'
+      AND student_id <> ${studentId}
       AND end_at > now()
       AND start_at < now() + make_interval(days => 7)
     ORDER BY start_at ASC
