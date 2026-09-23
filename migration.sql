@@ -500,6 +500,7 @@ CREATE TABLE IF NOT EXISTS shared_resources (
   name            text NOT NULL,
   blurb           text,                              -- shown to students on the card
   handover_note   text,                              -- how they will actually get access
+  help_video_url  text,                              -- YouTube link: how to get and use it
   max_minutes     int  NOT NULL DEFAULT 300,         -- 300 = Claude's rolling 5-hour window
   cooldown_hours  int  NOT NULL DEFAULT 24,          -- wait after a slot before booking again
   book_ahead_days int  NOT NULL DEFAULT 14,

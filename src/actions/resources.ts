@@ -25,6 +25,7 @@ import {
   RESOURCE_DEFAULT_AHEAD_DAYS,
   RESOURCE_DEFAULT_COOLDOWN_H,
   RESOURCE_DEFAULT_MAX_MIN,
+  normalizeUrl,
 } from "@/lib/constants";
 
 /**
@@ -497,6 +498,19 @@ export async function saveResource(
 
   const blurb = String(formData.get("blurb") ?? "").trim() || null;
   const note = String(formData.get("handover_note") ?? "").trim() || null;
+
+  // Accepted as any http(s) link, not just YouTube: the student card falls
+  // back to an outward link when it cannot be embedded, so a Drive or Loom
+  // recording is still useful. Only gibberish is rejected.
+  const video = normalizeUrl(String(formData.get("help_video_url") ?? "")) || null;
+  if (video !== null) {
+    try {
+      new URL(video);
+    } catch {
+      return { error: "That video link does not look like a web address." };
+    }
+  }
+
   const maxMinutes = Number(formData.get("max_minutes")) || RESOURCE_DEFAULT_MAX_MIN;
   const cooldown = Number(formData.get("cooldown_hours")) || RESOURCE_DEFAULT_COOLDOWN_H;
   const ahead = Number(formData.get("book_ahead_days")) || RESOURCE_DEFAULT_AHEAD_DAYS;
@@ -510,6 +524,7 @@ export async function saveResource(
       await sql`
         UPDATE shared_resources
         SET name = ${name}, blurb = ${blurb}, handover_note = ${note},
+            help_video_url = ${video},
             max_minutes = ${maxMinutes}, cooldown_hours = ${cooldown},
             book_ahead_days = ${ahead}, is_active = ${active}, sort_order = ${sort}
         WHERE id = ${id}
@@ -517,10 +532,10 @@ export async function saveResource(
     } else {
       await sql`
         INSERT INTO shared_resources
-          (name, blurb, handover_note, max_minutes, cooldown_hours, book_ahead_days,
-           is_active, sort_order)
-        VALUES (${name}, ${blurb}, ${note}, ${maxMinutes}, ${cooldown}, ${ahead},
-                ${active}, ${sort})
+          (name, blurb, handover_note, help_video_url, max_minutes, cooldown_hours,
+           book_ahead_days, is_active, sort_order)
+        VALUES (${name}, ${blurb}, ${note}, ${video}, ${maxMinutes}, ${cooldown},
+                ${ahead}, ${active}, ${sort})
       `;
     }
   } catch (e) {

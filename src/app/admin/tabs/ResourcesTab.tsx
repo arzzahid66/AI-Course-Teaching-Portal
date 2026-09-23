@@ -175,6 +175,11 @@ export default function ResourcesTab({
                   max {hours(r.max_minutes)} {"·"} {r.cooldown_hours}h cooldown {"·"}{" "}
                   {r.book_ahead_days}d ahead
                 </p>
+                {r.help_video_url && (
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {"\u{1F3AC}"} help video added
+                  </p>
+                )}
               </div>
               <button onClick={() => setEditing(r)} className={btn.small}>
                 Edit
@@ -501,6 +506,24 @@ function ResourceModal({
             placeholder="e.g. Ask for the sign-in code from the portal during your slot."
             className={fieldClass()}
           />
+        </label>
+
+        {/* type is text, not url: tutors paste "youtu.be/xyz" with no scheme
+            and the browser would block the form before the server could
+            normalise it. */}
+        <label className="block">
+          <span className={label}>Help video (optional)</span>
+          <input
+            name="help_video_url"
+            type="text"
+            inputMode="url"
+            defaultValue={resource?.help_video_url ?? ""}
+            placeholder="https://youtu.be/..."
+            className={fieldClass()}
+          />
+          <span className="block text-xs text-slate-400 mt-1">
+            Students get a player on the tool card - show them how to get and use it.
+          </span>
         </label>
 
         <div className="grid grid-cols-3 gap-2">

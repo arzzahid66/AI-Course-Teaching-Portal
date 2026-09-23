@@ -20,6 +20,8 @@ export type ResourceRow = {
   name: string;
   blurb: string | null;
   handover_note: string | null;
+  /** Optional "how to get and use it" video, shown on the student's tool card. */
+  help_video_url: string | null;
   max_minutes: number;
   cooldown_hours: number;
   book_ahead_days: number;
@@ -64,8 +66,8 @@ export type LoginCodeRow = {
 
 export async function loadResources(activeOnly: boolean): Promise<ResourceRow[]> {
   const rows = (await sql`
-    SELECT id, name, blurb, handover_note, max_minutes, cooldown_hours,
-           book_ahead_days, is_active, sort_order
+    SELECT id, name, blurb, handover_note, help_video_url, max_minutes,
+           cooldown_hours, book_ahead_days, is_active, sort_order
     FROM shared_resources
     WHERE (${!activeOnly} OR is_active = true)
     ORDER BY sort_order ASC, id ASC
@@ -75,6 +77,7 @@ export async function loadResources(activeOnly: boolean): Promise<ResourceRow[]>
     name: String(r.name),
     blurb: (r.blurb as string | null) ?? null,
     handover_note: (r.handover_note as string | null) ?? null,
+    help_video_url: (r.help_video_url as string | null) ?? null,
     max_minutes: Number(r.max_minutes),
     cooldown_hours: Number(r.cooldown_hours),
     book_ahead_days: Number(r.book_ahead_days),

@@ -20,6 +20,8 @@ import {
   CLAUDE_LOGIN_EMAIL,
   LOGIN_CODE_POLL_MS,
   RESOURCE_DURATIONS,
+  normalizeUrl,
+  youtubeEmbedUrl,
 } from "@/lib/constants";
 import { usePolling } from "@/lib/usePolling";
 import { Card, fmtWhen } from "./sections";
@@ -151,6 +153,10 @@ function ToolCard({ tool }: { tool: StudentResourceView }) {
       </div>
       {resource.blurb && <p className="text-sm text-slate-600 mt-1">{resource.blurb}</p>}
 
+      {resource.help_video_url && (
+        <HelpVideo url={resource.help_video_url} toolName={resource.name} />
+      )}
+
       {isLive && mine ? (
         <LiveSlot request={mine} resource={resource} now={now} />
       ) : mine?.status === "approved" ? (
@@ -178,6 +184,87 @@ function ToolCard({ tool }: { tool: StudentResourceView }) {
         </div>
       )}
     </Card>
+  );
+}
+
+/**
+ * The tutor's "how to get and use this" clip, sitting on the tool card.
+ *
+ * Collapsed until it is asked for, for two reasons: an always-open iframe per
+ * tool would pull YouTube's player into every portal visit whether or not
+ * anyone wants it, and a student who already knows the drill should not have
+ * to scroll past a video every time they book.
+ *
+ * A link that is not YouTube (a Drive or Loom recording, say) cannot be
+ * embedded, so it degrades to the same card as an outward link rather than
+ * disappearing.
+ */
+function HelpVideo({ url, toolName }: { url: string; toolName: string }) {
+  const [open, setOpen] = useState(false);
+  const embed = youtubeEmbedUrl(url);
+  const link = normalizeUrl(url);
+
+  const chrome =
+    "mt-3 flex w-full items-center gap-3 rounded-xl bg-slate-50 ring-1 ring-slate-200 px-3 py-2.5 text-left active:scale-[0.99] transition";
+  const play = (
+    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-red-600 text-white">
+      {"\u25B6"}
+    </span>
+  );
+  const caption = (
+    <span className="min-w-0">
+      <span className="block text-sm font-semibold text-slate-800">
+        How to get and use {toolName}
+      </span>
+      <span className="block text-xs text-slate-500">
+        New to this? Watch the short video first.
+      </span>
+    </span>
+  );
+
+  if (!embed) {
+    return (
+      <a href={link} target="_blank" rel="noopener noreferrer" className={chrome}>
+        {play}
+        {caption}
+      </a>
+    );
+  }
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className={chrome}>
+        {play}
+        {caption}
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-3">
+      <div className="aspect-video w-full overflow-hidden rounded-xl bg-black ring-1 ring-slate-200">
+        <iframe
+          src={embed}
+          title={`How to get and use ${toolName}`}
+          allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+          className="h-full w-full"
+        />
+      </div>
+      <div className="mt-1.5 flex items-center justify-between text-xs">
+        <button type="button" onClick={() => setOpen(false)} className="text-slate-500 underline">
+          Hide video
+        </button>
+        <a
+          href={link}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-slate-500 underline"
+        >
+          Open on YouTube
+        </a>
+      </div>
+    </div>
   );
 }
 

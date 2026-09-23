@@ -15,6 +15,56 @@ export function normalizeUrl(raw: string | null | undefined): string {
   return `https://${link}`;
 }
 
+/**
+ * Turn a pasted YouTube link into one that can go in an `<iframe src>`, or
+ * null when it is not a YouTube link at all.
+ *
+ * Tutors paste whatever the Share button gave them, so all the usual shapes
+ * are accepted: `watch?v=`, `youtu.be/`, `/shorts/`, `/live/` and an already
+ * embeddable `/embed/`. A `?t=` start time is carried over, because "watch
+ * from here" links are exactly what someone shares when the useful part is
+ * two minutes in.
+ *
+ * Returning null is not a failure - callers fall back to a plain outward link,
+ * so a Drive or Loom recording still works, just without the inline player.
+ *
+ * The embed points at youtube-nocookie.com: students are minors in some cases,
+ * and this way YouTube sets no tracking cookie unless they actually press play.
+ */
+export function youtubeEmbedUrl(raw: string | null | undefined): string | null {
+  const link = normalizeUrl(raw);
+  if (!link) return null;
+
+  let u: URL;
+  try {
+    u = new URL(link);
+  } catch {
+    return null;
+  }
+
+  const host = u.hostname.replace(/^www\./i, "").toLowerCase();
+  const path = u.pathname;
+  let id = "";
+
+  if (host === "youtu.be") id = path.slice(1);
+  else if (host === "youtube.com" || host === "m.youtube.com" || host === "youtube-nocookie.com") {
+    if (path === "/watch") id = u.searchParams.get("v") ?? "";
+    else if (path.startsWith("/embed/")) id = path.slice(7);
+    else if (path.startsWith("/shorts/")) id = path.slice(8);
+    else if (path.startsWith("/live/")) id = path.slice(6);
+  }
+
+  id = id.split("/")[0];
+  // YouTube ids are 11 chars today, but the range keeps that from being a
+  // rule we have to revisit; the character class is the part that matters.
+  if (!/^[A-Za-z0-9_-]{8,16}$/.test(id)) return null;
+
+  const t = u.searchParams.get("t") ?? u.searchParams.get("start") ?? "";
+  const secs = /^(\d+)s?$/.exec(t)?.[1] ?? "";
+
+  return `https://www.youtube-nocookie.com/embed/${id}${secs ? `?start=${secs}` : ""}`;
+}
+
 /** Alias kept for the class / Google Meet check-in link. @see normalizeUrl */
 export const normalizeMeetLink = normalizeUrl;
 
