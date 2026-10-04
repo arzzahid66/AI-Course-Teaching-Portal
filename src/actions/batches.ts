@@ -5,7 +5,6 @@ import { sql } from "@/lib/db";
 import { assertAdmin } from "@/lib/auth";
 import {
   computeBatchProgress,
-  iso,
   loadBatches,
   loadInvoices,
   type BatchRow,
@@ -33,7 +32,6 @@ function readBatchForm(formData: FormData) {
     monthlyFee: num("monthly_fee", 2000),
     graceDays: num("grace_days", 7),
     status: String(formData.get("status") ?? "upcoming"),
-    wAttendance: num("w_attendance", 30),
     wHomework: num("w_homework", 35),
     wQuiz: num("w_quiz", 25),
     wVideos: num("w_videos", 10),
@@ -50,19 +48,20 @@ function validateBatch(f: ReturnType<typeof readBatchForm>): string | null {
   if (f.monthlyFee < 0) return "Monthly fee can't be negative.";
   if (f.graceDays < 0) return "Grace days can't be negative.";
   if (!["upcoming", "active", "completed"].includes(f.status)) return "Pick a status.";
-  if ([f.wAttendance, f.wHomework, f.wQuiz, f.wVideos].some((w) => w < 0)) {
+  if ([f.wHomework, f.wQuiz, f.wVideos].some((w) => w < 0)) {
     return "Score weights can't be negative.";
   }
-  if (f.wAttendance + f.wHomework + f.wQuiz + f.wVideos === 0) {
+  if (f.wHomework + f.wQuiz + f.wVideos === 0) {
     return "At least one score weight must be above 0.";
   }
   return null;
 }
 
 /**
- * Create an intake and auto-schedule its weekly classes: one per weekend, every
- * 7 days from the start date at the class time (Pakistan time), each linked to
- * that weekend of the level's curriculum. Meet link + code are added later.
+ * Create an intake and auto-schedule its weekends: one per weekend, every 7 days
+ * from the start date at the class time (Pakistan time), each linked to that
+ * weekend of the level's curriculum. These dates drive "this week" and homework
+ * due dates. Attendance is no longer tracked, so its weight is stored as 0.
  */
 export async function createBatch(formData: FormData): Promise<{ error?: string; id?: number }> {
   await assertAdmin();
@@ -74,7 +73,7 @@ export async function createBatch(formData: FormData): Promise<{ error?: string;
     INSERT INTO batches (name, level, start_date, class_time, weekends, months, monthly_fee,
       grace_days, status, w_attendance, w_homework, w_quiz, w_videos)
     VALUES (${f.name}, ${f.level}, ${f.startDate}, ${f.classTime}, ${f.weekends}, ${f.months},
-      ${f.monthlyFee}, ${f.graceDays}, ${f.status}, ${f.wAttendance}, ${f.wHomework}, ${f.wQuiz},
+      ${f.monthlyFee}, ${f.graceDays}, ${f.status}, 0, ${f.wHomework}, ${f.wQuiz},
       ${f.wVideos})
     RETURNING id
   `) as { id: number }[];
@@ -97,7 +96,6 @@ export async function createBatch(formData: FormData): Promise<{ error?: string;
 /**
  * Edit an intake. Changing the fee or months only affects students enrolled
  * afterwards; existing fee months are edited per student in the Fees tab.
- * Dates of already-scheduled classes are edited in the Classes tab.
  */
 export async function updateBatch(id: number, formData: FormData): Promise<{ error?: string }> {
   await assertAdmin();
@@ -107,7 +105,7 @@ export async function updateBatch(id: number, formData: FormData): Promise<{ err
   await sql`
     UPDATE batches SET name = ${f.name}, class_time = ${f.classTime}, months = ${f.months},
       monthly_fee = ${f.monthlyFee}, grace_days = ${f.graceDays}, status = ${f.status},
-      w_attendance = ${f.wAttendance}, w_homework = ${f.wHomework}, w_quiz = ${f.wQuiz},
+      w_homework = ${f.wHomework}, w_quiz = ${f.wQuiz},
       w_videos = ${f.wVideos}
     WHERE id = ${id}
   `;
@@ -149,10 +147,8 @@ export type DashboardStats = {
     outstanding: number; // due already (past due date), not yet paid
     overdueStudents: { name: string; remaining: number; months: number[] }[];
   };
-  attendance: { title: string; scheduled_at: string; present: number; absent: number; excused: number }[];
   homeworkAwaiting: number;
   progress: { average: number | null; atRisk: { name: string; score: number }[] };
-  nextClass: { title: string; scheduled_at: string } | null;
 };
 
 export async function getDashboardStats(batchId: number): Promise<DashboardStats> {
@@ -170,18 +166,9 @@ export async function getBatchOverview(
 }
 
 async function buildDashboardStats(batchId: number, progress: ProgressRow[]): Promise<DashboardStats> {
-  const [invoices, attendanceRows, hwRows, thisMonthRows, nextRows, names] =
+  const [invoices, hwRows, thisMonthRows, names] =
     await Promise.all([
       loadInvoices({ batchId }),
-      sql`
-        SELECT s.title, s.scheduled_at,
-          COUNT(a.id) FILTER (WHERE a.status = 'present') AS present,
-          COUNT(a.id) FILTER (WHERE a.status = 'absent') AS absent,
-          COUNT(a.id) FILTER (WHERE a.status = 'excused') AS excused
-        FROM sessions s LEFT JOIN attendance a ON a.session_id = s.id
-        WHERE s.batch_id = ${batchId} AND s.closed_at IS NOT NULL
-        GROUP BY s.id ORDER BY s.scheduled_at ASC
-      ` as unknown as Promise<{ title: string; scheduled_at: Date; present: string; absent: string; excused: string }[]>,
       sql`
         SELECT COUNT(*) AS n FROM homework_submissions h
         JOIN enrollments e ON e.id = h.enrollment_id
@@ -196,12 +183,6 @@ async function buildDashboardStats(batchId: number, progress: ProgressRow[]): Pr
           AND date_trunc('month', p.paid_at AT TIME ZONE 'Asia/Karachi')
             = date_trunc('month', now() AT TIME ZONE 'Asia/Karachi')
       ` as unknown as Promise<{ total: string }[]>,
-      sql`
-        SELECT title, scheduled_at FROM sessions
-        WHERE batch_id = ${batchId} AND closed_at IS NULL AND is_open = false
-          AND scheduled_at > now() - interval '12 hours'
-        ORDER BY scheduled_at ASC LIMIT 1
-      ` as unknown as Promise<{ title: string; scheduled_at: Date }[]>,
       sql`
         SELECT e.id, s.name FROM enrollments e JOIN students s ON s.id = e.student_id
         WHERE e.batch_id = ${batchId}
@@ -234,13 +215,6 @@ async function buildDashboardStats(batchId: number, progress: ProgressRow[]): Pr
         .reduce((s, i) => s + i.remaining, 0),
       overdueStudents: [...overdue.values()].sort((a, b) => b.remaining - a.remaining),
     },
-    attendance: attendanceRows.map((r) => ({
-      title: r.title,
-      scheduled_at: iso(r.scheduled_at),
-      present: Number(r.present),
-      absent: Number(r.absent),
-      excused: Number(r.excused),
-    })),
     homeworkAwaiting: Number(hwRows[0]?.n ?? 0),
     progress: {
       average: scored.length
@@ -251,9 +225,6 @@ async function buildDashboardStats(batchId: number, progress: ProgressRow[]): Pr
         .sort((a, b) => a.score - b.score)
         .map((p) => ({ name: p.name, score: p.score })),
     },
-    nextClass: nextRows[0]
-      ? { title: nextRows[0].title, scheduled_at: iso(nextRows[0].scheduled_at) }
-      : null,
   };
 }
 

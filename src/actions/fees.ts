@@ -233,7 +233,7 @@ export async function sendFeeReminders(batchId: number): Promise<{ sent: number;
       lines: [
         `${rsText(remaining)} is due for your course fee.`,
         months.map((i) => `Month ${i.month_no}: ${rsText(i.remaining)} (due ${i.due_date})`).join("\n"),
-        "Unpaid fees past the grace period block class check-in. Open the Fees section of the portal to see how to pay.",
+        "Unpaid fees past the grace period lock your portal account. Open the Fees section of the portal to see how to pay.",
       ],
     });
   }

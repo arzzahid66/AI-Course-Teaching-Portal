@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "ClassGate",
-  description: "Student portal for the AI Engineering Course — classes, videos, homework, progress and fees",
+  description: "Student portal for the AI Engineering Course — videos, quizzes, homework, progress and fees",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,

@@ -104,10 +104,9 @@ function BatchFields({ batch }: { batch?: BatchRow }) {
       </label>
       <fieldset className="col-span-2 mt-1">
         <legend className={label}>Progress score weights</legend>
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           {(
             [
-              ["w_attendance", "Attendance", batch?.w_attendance ?? 30],
               ["w_homework", "Homework", batch?.w_homework ?? 35],
               ["w_quiz", "Quiz", batch?.w_quiz ?? 25],
               ["w_videos", "Videos", batch?.w_videos ?? 10],
@@ -142,14 +141,14 @@ export default function IntakesTab({
       <Card>
         <h2 className="font-bold mb-1">Create intake</h2>
         <p className="text-slate-500 text-sm mb-3">
-          One weekly class is scheduled automatically for every weekend, starting on the first class
-          date, each linked to that weekend of the course. Add the Meet link and code in Classes.
+          Every weekend is scheduled automatically, one week apart from the start date, each linked to
+          that weekend of the course. These dates set the weekly homework deadlines.
         </p>
         <form
           ref={formRef}
           action={(fd) =>
             create.run(() => createBatch(fd), {
-              success: "Intake created and classes scheduled.",
+              success: "Intake created and weekends scheduled.",
               onDone: (res) => {
                 formRef.current?.reset();
                 if (res.id) router.push(`/admin?batch=${res.id}`);

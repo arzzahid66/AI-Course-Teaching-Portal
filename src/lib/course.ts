@@ -30,7 +30,6 @@ export type BatchRow = {
   monthly_fee: number;
   grace_days: number;
   status: "upcoming" | "active" | "completed";
-  w_attendance: number;
   w_homework: number;
   w_quiz: number;
   w_videos: number;
@@ -41,7 +40,7 @@ export async function loadBatches(): Promise<BatchRow[]> {
   const rows = (await sql`
     SELECT b.id, b.name, b.level, to_char(b.start_date, 'YYYY-MM-DD') AS start_date,
       to_char(b.class_time, 'HH24:MI') AS class_time, b.weekends, b.months, b.monthly_fee,
-      b.grace_days, b.status, b.w_attendance, b.w_homework, b.w_quiz, b.w_videos,
+      b.grace_days, b.status, b.w_homework, b.w_quiz, b.w_videos,
       (SELECT COUNT(*) FROM enrollments e WHERE e.batch_id = b.id AND e.status <> 'dropped') AS enrolled
     FROM batches b
     ORDER BY (b.status = 'completed') ASC, b.start_date DESC, b.id DESC
@@ -76,7 +75,7 @@ export type InvoiceView = {
   student_id: number;
   month_no: number;
   due_date: string; // YYYY-MM-DD
-  grace_until: string; // YYYY-MM-DD — last day before check-in is blocked
+  grace_until: string; // YYYY-MM-DD — last day before the account is locked
   amount: number;
   discount: number;
   paid: number;
@@ -90,7 +89,7 @@ export type InvoiceView = {
    * Karachi date, never the student's device clock.
    */
   days_to_due: number;
-  /** Unpaid past the grace period — blocks check-in. */
+  /** Unpaid past the grace period — locks the account. */
   blocks: boolean;
   note: string | null;
 };
@@ -170,8 +169,8 @@ export async function loadInvoices(opts: {
 /**
  * First invoice that blocks this student, across active enrollments: unpaid
  * `grace_days` after the later of its due date and the day they joined (so a
- * late joiner still gets the full grace period). Blocks check-in and locks the
- * account (see getAccountLock).
+ * late joiner still gets the full grace period). Locks the account (see
+ * getAccountLock).
  */
 export async function getBlockingInvoice(studentId: number): Promise<InvoiceView | null> {
   const rows = (await sql`
@@ -375,7 +374,6 @@ export type ProgressRow = {
   email: string | null;
   score: number | null;
   band: Band;
-  attendance: ProgressPart & { held: number; present: number; excused: number; absent: number };
   homework: ProgressPart & { due: number; graded: number; missing: number; awaiting: number; marks: number };
   quiz: ProgressPart & { total: number; attempted: number };
   videos: ProgressPart & { released: number; watched: number };
@@ -394,9 +392,6 @@ type ProgressSqlRow = {
   student_id: number;
   name: string;
   email: string | null;
-  held: string;
-  present: string;
-  excused: string;
   hw_due: string;
   hw_graded: string;
   hw_missing: string;
@@ -413,11 +408,11 @@ type ProgressSqlRow = {
  * Progress for every (non-dropped) enrollment of a batch. Only items that are
  * already due count; a part with nothing due is left out and the remaining
  * weights are re-normalised, so a new intake does not start at 0.
- *   attendance: present ÷ (closed sessions − excused)
  *   homework:   marks/10 averaged over due weekends; missing = 0; submitted but
  *               not yet marked is left out until marked
  *   quiz:       best submitted % per published quiz for the level; none = 0
- *   videos:     watched ÷ videos of weekends whose class time has passed
+ *   videos:     watched ÷ main videos (topic + hands_on) of weekends whose
+ *               date has passed; extras, slides, code and notes don't count
  */
 export async function computeBatchProgress(batchId: number): Promise<ProgressRow[]> {
   const batch = (await loadBatches()).find((b) => b.id === batchId);
@@ -428,19 +423,6 @@ export async function computeBatchProgress(batchId: number): Promise<ProgressRow
       SELECT e.id, e.student_id, s.name, s.email
       FROM enrollments e JOIN students s ON s.id = e.student_id
       WHERE e.batch_id = ${batchId} AND e.status <> 'dropped'
-    ),
-    held AS (
-      SELECT id FROM sessions
-      WHERE batch_id = ${batchId} AND closed_at IS NOT NULL AND is_open = false
-    ),
-    att AS (
-      SELECT e.id AS enrollment_id,
-        COUNT(h.id) AS held,
-        COUNT(a.id) FILTER (WHERE a.status = 'present') AS present,
-        COUNT(a.id) FILTER (WHERE a.status = 'excused') AS excused
-      FROM enr e CROSS JOIN held h
-      LEFT JOIN attendance a ON a.session_id = h.id AND a.student_id = e.student_id
-      GROUP BY e.id
     ),
     hw_due AS (
       SELECT DISTINCT s.weekend_id
@@ -480,7 +462,7 @@ export async function computeBatchProgress(batchId: number): Promise<ProgressRow
       SELECT DISTINCT v.id
       FROM weekend_videos v
       JOIN sessions s ON s.weekend_id = v.weekend_id AND s.batch_id = ${batchId}
-      WHERE s.scheduled_at <= now() AND v.kind <> 'extra'
+      WHERE s.scheduled_at <= now() AND v.kind IN ('topic', 'hands_on')
     ),
     vid AS (
       SELECT e.id AS enrollment_id,
@@ -491,8 +473,6 @@ export async function computeBatchProgress(batchId: number): Promise<ProgressRow
       GROUP BY e.id
     )
     SELECT e.id AS enrollment_id, e.student_id, e.name, e.email,
-      COALESCE(att.held, 0) AS held, COALESCE(att.present, 0) AS present,
-      COALESCE(att.excused, 0) AS excused,
       COALESCE(hw.due, 0) AS hw_due, COALESCE(hw.graded, 0) AS hw_graded,
       COALESCE(hw.missing, 0) AS hw_missing, COALESCE(hw.awaiting, 0) AS hw_awaiting,
       COALESCE(hw.marks, 0) AS hw_marks,
@@ -500,7 +480,6 @@ export async function computeBatchProgress(batchId: number): Promise<ProgressRow
       COALESCE(quiz.sum_best, 0) AS quiz_sum,
       COALESCE(vid.released, 0) AS vid_released, COALESCE(vid.watched, 0) AS vid_watched
     FROM enr e
-    LEFT JOIN att ON att.enrollment_id = e.id
     LEFT JOIN hw ON hw.enrollment_id = e.id
     LEFT JOIN quiz ON quiz.enrollment_id = e.id
     LEFT JOIN vid ON vid.enrollment_id = e.id
@@ -508,12 +487,6 @@ export async function computeBatchProgress(batchId: number): Promise<ProgressRow
   `) as ProgressSqlRow[];
 
   return rows.map((r) => {
-    const held = Number(r.held);
-    const present = Number(r.present);
-    const excused = Number(r.excused);
-    const counted = held - excused;
-    const attendancePct = counted > 0 ? (present / counted) * 100 : null;
-
     const graded = Number(r.hw_graded);
     const missing = Number(r.hw_missing);
     const hwCount = graded + missing;
@@ -527,7 +500,6 @@ export async function computeBatchProgress(batchId: number): Promise<ProgressRow
     const videoPct = released > 0 ? (watched / released) * 100 : null;
 
     const parts: [number | null, number][] = [
-      [attendancePct, batch.w_attendance],
       [homeworkPct, batch.w_homework],
       [quizPct, batch.w_quiz],
       [videoPct, batch.w_videos],
@@ -547,14 +519,6 @@ export async function computeBatchProgress(batchId: number): Promise<ProgressRow
       email: r.email,
       score,
       band: bandFor(score),
-      attendance: {
-        pct: round(attendancePct),
-        weight: batch.w_attendance,
-        held,
-        present,
-        excused,
-        absent: Math.max(0, held - present - excused),
-      },
       homework: {
         pct: round(homeworkPct),
         weight: batch.w_homework,

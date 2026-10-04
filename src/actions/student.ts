@@ -4,15 +4,14 @@ import { revalidatePath } from "next/cache";
 import { sql } from "@/lib/db";
 import { requireStudentId } from "@/lib/auth";
 import {
-  CHECKIN_WINDOW_MIN,
-  normalizeMeetLink,
+  CONTENT_KINDS,
   normalizeUrl,
   parseResourceLinks,
+  type ContentKind,
   type ResourceLink,
 } from "@/lib/constants";
 import {
   computeBatchProgress,
-  getBlockingInvoice,
   getCurrentEnrollment,
   getSetting,
   iso,
@@ -28,20 +27,8 @@ import { notifyAdmin } from "@/lib/pushNotifications";
 import { getStudentQuizzes, type StudentQuiz } from "@/actions/quiz";
 
 // ---------------------------------------------------------------------------
-// Types returned to the client. The session code and Meet link are NEVER
-// included until a successful check-in.
+// Types returned to the client
 // ---------------------------------------------------------------------------
-export type CheckInState =
-  | { kind: "no-enrollment" }
-  | { kind: "blocked"; monthNo: number; remaining: number; dueDate: string }
-  | { kind: "no-session" }
-  | { kind: "present"; sessionTitle: string; meetLink: string }
-  | { kind: "can-checkin"; sessionTitle: string };
-
-export type AttendanceEntry = { title: string; scheduled_at: string; status: string };
-
-export type NextClass = { title: string; scheduled_at: string };
-
 export type MyQuestion = {
   id: number;
   subject: string | null;
@@ -52,23 +39,12 @@ export type MyQuestion = {
   answered_at: string | null;
 };
 
-export type LeaveRequest = {
-  id: number;
-  lesson_title: string | null;
-  lesson_at: string | null;
-  reason: string;
-  status: "pending" | "approved" | "rejected";
-  feedback: string | null;
-  created_at: string;
-  reviewed_at: string | null;
-};
-
 export type PortalVideo = {
   id: number;
   title: string;
   /** Empty until the weekend opens. */
   url: string;
-  kind: "topic" | "hands_on" | "extra";
+  kind: ContentKind;
   watched: boolean;
 };
 
@@ -128,9 +104,6 @@ export type PortalData = {
     startDate: string;
     graceDays: number;
   } | null;
-  checkin: CheckInState;
-  nextClass: NextClass | null;
-  attendance: AttendanceEntry[];
   weekends: PortalWeekend[];
   fees: {
     invoices: InvoiceView[];
@@ -143,63 +116,8 @@ export type PortalData = {
   };
   progress: { mine: ProgressRow | null; classAverage: number | null };
   questions: MyQuestion[];
-  leaves: LeaveRequest[];
   quizzes: StudentQuiz[];
 };
-
-export type CheckInResult = { ok: true; meetLink: string } | { ok: false; error: string };
-
-type OpenSession = { id: number; title: string; meet_link: string; code: string; created_at: Date };
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-async function getNextClass(batchId: number): Promise<{ id: number; title: string; scheduled_at: string } | null> {
-  const rows = (await sql`
-    SELECT id, title, scheduled_at
-    FROM sessions
-    WHERE batch_id = ${batchId} AND is_open = false AND closed_at IS NULL
-      AND scheduled_at > now() - interval '12 hours'
-    ORDER BY scheduled_at ASC
-    LIMIT 1
-  `) as { id: number; title: string; scheduled_at: Date }[];
-  return rows[0] ? { ...rows[0], scheduled_at: iso(rows[0].scheduled_at) } : null;
-}
-
-async function getOpenSession(batchId: number): Promise<OpenSession | null> {
-  const rows = (await sql`
-    SELECT id, title, meet_link, code, created_at
-    FROM sessions
-    WHERE is_open = true AND batch_id = ${batchId}
-    ORDER BY created_at DESC
-    LIMIT 1
-  `) as OpenSession[];
-  return rows[0] ?? null;
-}
-
-async function getCheckInState(studentId: number, batchId: number | null): Promise<CheckInState> {
-  if (!batchId) return { kind: "no-enrollment" };
-  const blocking = await getBlockingInvoice(studentId);
-  if (blocking) {
-    return {
-      kind: "blocked",
-      monthNo: blocking.month_no,
-      remaining: blocking.remaining,
-      dueDate: blocking.due_date,
-    };
-  }
-  const session = await getOpenSession(batchId);
-  if (!session) return { kind: "no-session" };
-  const present = (await sql`
-    SELECT 1 FROM attendance
-    WHERE student_id = ${studentId} AND session_id = ${session.id} AND status = 'present'
-    LIMIT 1
-  `) as unknown[];
-  if (present.length > 0) {
-    return { kind: "present", sessionTitle: session.title, meetLink: normalizeMeetLink(session.meet_link) };
-  }
-  return { kind: "can-checkin", sessionTitle: session.title };
-}
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -218,22 +136,12 @@ export async function getPortalData(): Promise<PortalData> {
   const current = await getCurrentEnrollment(studentId);
   const batch = current?.batch ?? null;
 
-  const [checkin, questionsRaw, leavesRaw, accounts, whatsapp, quizzes] = await Promise.all([
-    getCheckInState(studentId, batch?.id ?? null),
+  const [questionsRaw, accounts, whatsapp, quizzes] = await Promise.all([
     sql`
       SELECT id, subject, body, status, answer, created_at, answered_at
       FROM questions WHERE student_id = ${studentId}
       ORDER BY created_at DESC LIMIT 50
     ` as unknown as Promise<(Omit<MyQuestion, "created_at" | "answered_at"> & { created_at: Date; answered_at: Date | null })[]>,
-    sql`
-      SELECT id, lesson_title, lesson_at, reason, status, feedback, created_at, reviewed_at
-      FROM leave_requests WHERE student_id = ${studentId}
-      ORDER BY created_at DESC LIMIT 50
-    ` as unknown as Promise<(Omit<LeaveRequest, "lesson_at" | "created_at" | "reviewed_at"> & {
-      lesson_at: Date | null;
-      created_at: Date;
-      reviewed_at: Date | null;
-    })[]>,
     loadPaymentAccounts(true),
     getSetting("tutor_whatsapp"),
     getStudentQuizzes().catch((e) => {
@@ -247,12 +155,6 @@ export async function getPortalData(): Promise<PortalData> {
     created_at: iso(q.created_at),
     answered_at: isoOrNull(q.answered_at),
   }));
-  const leaves = leavesRaw.map((l) => ({
-    ...l,
-    lesson_at: isoOrNull(l.lesson_at),
-    created_at: iso(l.created_at),
-    reviewed_at: isoOrNull(l.reviewed_at),
-  }));
 
   const emptyFees = { invoices: [], payments: [], accounts, whatsapp: whatsapp ?? "", total: 0, paid: 0, remaining: 0 };
 
@@ -261,27 +163,16 @@ export async function getPortalData(): Promise<PortalData> {
       name,
       email,
       enrollment: null,
-      checkin,
-      nextClass: null,
-      attendance: [],
       weekends: [],
       fees: emptyFees,
       progress: { mine: null, classAverage: null },
       questions,
-      leaves,
       quizzes,
     };
   }
 
-  const [nextClass, attendanceRaw, curriculum, sessionsRaw, watchedRaw, homeworkRaw, invoices, paymentsRaw, progressRows] =
+  const [curriculum, sessionsRaw, watchedRaw, homeworkRaw, invoices, paymentsRaw, progressRows] =
     await Promise.all([
-      getNextClass(batch.id),
-      sql`
-        SELECT s.title, s.scheduled_at, a.status
-        FROM attendance a JOIN sessions s ON s.id = a.session_id
-        WHERE a.student_id = ${studentId} AND s.batch_id = ${batch.id}
-        ORDER BY s.scheduled_at DESC
-      ` as unknown as Promise<{ title: string; scheduled_at: Date; status: string }[]>,
       loadCurriculum(),
       sql`
         SELECT weekend_id, MIN(scheduled_at) AS scheduled_at
@@ -380,9 +271,6 @@ export async function getPortalData(): Promise<PortalData> {
       startDate: batch.start_date,
       graceDays: batch.grace_days,
     },
-    checkin,
-    nextClass: nextClass ? { title: nextClass.title, scheduled_at: nextClass.scheduled_at } : null,
-    attendance: attendanceRaw.map((a) => ({ ...a, scheduled_at: iso(a.scheduled_at) })),
     weekends,
     fees: {
       invoices,
@@ -405,7 +293,6 @@ export async function getPortalData(): Promise<PortalData> {
         : null,
     },
     questions,
-    leaves,
     quizzes,
   };
 }
@@ -434,10 +321,12 @@ async function getOpenWeekendForStudent(
 
 export async function setVideoWatched(videoId: number, watched: boolean): Promise<{ error?: string }> {
   const studentId = await requireStudentId();
-  const video = (await sql`SELECT weekend_id FROM weekend_videos WHERE id = ${videoId}`) as {
+  const video = (await sql`SELECT weekend_id, kind FROM weekend_videos WHERE id = ${videoId}`) as {
     weekend_id: number;
+    kind: ContentKind;
   }[];
   if (!video[0]) return { error: "Video not found." };
+  if (!CONTENT_KINDS[video[0].kind]?.isVideo) return { error: "Only videos can be marked watched." };
   const check = await getOpenWeekendForStudent(studentId, video[0].weekend_id);
   if ("error" in check) return { error: check.error };
 
@@ -484,44 +373,6 @@ export async function submitHomework(weekendId: number, formData: FormData): Pro
 }
 
 // ---------------------------------------------------------------------------
-// Request leave from the next class (student → tutor)
-// ---------------------------------------------------------------------------
-export async function submitLeaveRequest(formData: FormData): Promise<{ error?: string }> {
-  const studentId = await requireStudentId();
-  const reason = String(formData.get("reason") ?? "").trim();
-  if (!reason) return { error: "Please tell your tutor why you need leave." };
-  if (reason.length > 1000) return { error: "Reason is too long (max 1000 characters)." };
-
-  const current = await getCurrentEnrollment(studentId);
-  const next = current ? await getNextClass(current.batch.id) : null;
-
-  if (next) {
-    const dupe = (await sql`
-      SELECT 1 FROM leave_requests
-      WHERE student_id = ${studentId} AND session_id = ${next.id} AND status = 'pending'
-      LIMIT 1
-    `) as unknown[];
-    if (dupe.length > 0) return { error: "You already have a pending leave request for the next class." };
-  }
-
-  try {
-    await sql`
-      INSERT INTO leave_requests (student_id, session_id, lesson_title, lesson_at, reason)
-      VALUES (${studentId}, ${next?.id ?? null}, ${next?.title ?? null}, ${next?.scheduled_at ?? null}, ${reason})
-    `;
-  } catch {
-    return { error: "Could not send your leave request. Please try again." };
-  }
-
-  notifyAdmin({
-    title: "New Leave Request",
-    body: next?.title ? `${next.title}: ${reason.slice(0, 80)}` : reason.slice(0, 100),
-    url: "/admin",
-  }).catch(() => {});
-  return {};
-}
-
-// ---------------------------------------------------------------------------
 // Ask a question (student → tutor)
 // ---------------------------------------------------------------------------
 export async function submitQuestion(formData: FormData): Promise<{ error?: string }> {
@@ -545,58 +396,4 @@ export async function submitQuestion(formData: FormData): Promise<{ error?: stri
     url: "/admin",
   }).catch(() => {});
   return {};
-}
-
-// ---------------------------------------------------------------------------
-// Check-in (verified entirely server-side; resolves student from the cookie)
-// ---------------------------------------------------------------------------
-export async function checkIn(codeInput: string): Promise<CheckInResult> {
-  const studentId = await requireStudentId();
-
-  const students = (await sql`SELECT status FROM students WHERE id = ${studentId} LIMIT 1`) as {
-    status: string;
-  }[];
-  if (!students[0]) return { ok: false, error: "Account not found." };
-  if (students[0].status !== "active") {
-    return { ok: false, error: "Your account is not active. Contact your tutor." };
-  }
-
-  const current = await getCurrentEnrollment(studentId);
-  if (!current) return { ok: false, error: "You are not enrolled in an active batch. Contact your tutor." };
-
-  const blocking = await getBlockingInvoice(studentId);
-  if (blocking) {
-    return {
-      ok: false,
-      error: `Month ${blocking.month_no} fee (Rs ${blocking.remaining.toLocaleString("en-PK")}) is unpaid. Open the Fees tab to pay, then you can join.`,
-    };
-  }
-
-  const session = await getOpenSession(current.batch.id);
-  if (!session) return { ok: false, error: "No class is live right now." };
-
-  // Check-in window: opens when the tutor opens the session (created_at) and
-  // stays open for CHECKIN_WINDOW_MIN minutes.
-  const closesAt = new Date(session.created_at).getTime() + CHECKIN_WINDOW_MIN * 60 * 1000;
-  if (Date.now() > closesAt) {
-    return { ok: false, error: `Check-in closed (only open for ${CHECKIN_WINDOW_MIN} min after class starts).` };
-  }
-
-  const expected = (session.code ?? "").trim().toLowerCase();
-  const given = (codeInput ?? "").trim().toLowerCase();
-  if (!given || given !== expected) {
-    return { ok: false, error: "That code is not correct. Listen for today's code word." };
-  }
-
-  try {
-    await sql`
-      INSERT INTO attendance (student_id, session_id, status)
-      VALUES (${studentId}, ${session.id}, 'present')
-      ON CONFLICT (student_id, session_id)
-      DO UPDATE SET status = 'present', checked_in_at = now()
-    `;
-  } catch {
-    return { ok: false, error: "Something went wrong. Please try again." };
-  }
-  return { ok: true, meetLink: normalizeMeetLink(session.meet_link) };
 }

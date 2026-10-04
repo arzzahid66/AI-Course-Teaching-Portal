@@ -468,9 +468,7 @@ function StudentDetailModal({
 
               {e.progress && (
                 <p className="text-xs text-slate-500 mb-2">
-                  Attendance {e.progress.attendance.present}/{e.progress.attendance.held}
-                  {e.progress.attendance.excused > 0 && ` (+${e.progress.attendance.excused} excused)`} ·{" "}
-                  {e.progress.attendance.absent} absent · Homework {e.progress.homework.pct ?? "—"}% · Quiz{" "}
+                  Homework {e.progress.homework.pct ?? "—"}% · Quiz{" "}
                   {e.progress.quiz.pct ?? "—"}% · Videos {e.progress.videos.watched}/{e.progress.videos.released}
                 </p>
               )}
@@ -572,30 +570,6 @@ function StudentDetailModal({
           </div>
           <Msg error={enroll.error} />
 
-          <h3 className="font-semibold text-sm mb-1">Attendance</h3>
-          {data.attendance.length === 0 ? (
-            <p className="text-slate-400 text-sm mb-3">No classes yet.</p>
-          ) : (
-            <ul className="text-sm divide-y mb-3">
-              {data.attendance.map((a, idx) => (
-                <li key={idx} className="flex justify-between py-1">
-                  <span className="truncate">{a.title}</span>
-                  <span
-                    className={
-                      a.status === "present"
-                        ? "text-emerald-600"
-                        : a.status === "excused"
-                          ? "text-violet-600"
-                          : "text-rose-600"
-                    }
-                  >
-                    {a.status}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-
           <h3 className="font-semibold text-sm mb-1">Homework</h3>
           {data.homework.length === 0 ? (
             <p className="text-slate-400 text-sm mb-3">Nothing submitted yet.</p>
@@ -618,7 +592,7 @@ function StudentDetailModal({
 
       <button
         onClick={() => {
-          if (!confirm(`Delete ${student.name} permanently, with all fees, payments and attendance? This cannot be undone.`))
+          if (!confirm(`Delete ${student.name} permanently, with all fees, payments, homework and quiz attempts? This cannot be undone.`))
             return;
           danger.run(() => deleteStudent(student.id), { onDone: onClose });
         }}

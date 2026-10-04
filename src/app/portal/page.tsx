@@ -3,6 +3,7 @@ import { getStudentSession } from "@/lib/auth";
 import { getAccountLock } from "@/lib/course";
 import { getPortalData } from "@/actions/student";
 import { getStudentResources } from "@/actions/resources";
+import { getStudentLibrary } from "@/actions/library";
 import AccountLocked from "../login/AccountLocked";
 import PortalClient from "./PortalClient";
 
@@ -17,13 +18,18 @@ export default async function PortalPage() {
   const lock = await getAccountLock(studentId);
   if (lock) return <AccountLocked lock={lock} signedIn />;
 
-  const [data, resources] = await Promise.all([
+  const [data, resources, library] = await Promise.all([
     getPortalData(),
     // The Tools tab must never be able to take the whole portal down.
     getStudentResources().catch((e) => {
       console.error("[portal] tools load failed:", e);
       return { tools: [], history: [], helpVideo: null };
     }),
+    // Same for the Library: an empty shelf, never a broken portal.
+    getStudentLibrary().catch((e) => {
+      console.error("[portal] library load failed:", e);
+      return [];
+    }),
   ]);
-  return <PortalClient data={data} resources={resources} />;
+  return <PortalClient data={data} resources={resources} library={library} />;
 }

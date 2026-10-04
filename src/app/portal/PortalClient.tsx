@@ -2,13 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import {
-  checkIn,
-  submitQuestion,
-  submitLeaveRequest,
-  type PortalData,
-  type NextClass,
-} from "@/actions/student";
+import { submitQuestion, type PortalData } from "@/actions/student";
 import {
   startQuizAttempt,
   submitQuizAttempt,
@@ -21,16 +15,16 @@ import {
 import { studentLogout } from "@/actions/studentAuth";
 import { saveStudentSubscription } from "@/actions/push";
 import { usePushSubscription } from "@/lib/usePushSubscription";
+import type { LibraryVideo } from "@/actions/library";
 import { COURSE_NAME, INSTRUCTORS, type Instructor } from "@/lib/constants";
 import {
   Card,
   CourseTab,
-  FeeBlockedCard,
   FeesTab,
   FeeDueBanner,
   clearFeeBannerDismissals,
   HomeworkTab,
-  NotEnrolledCard,
+  LibraryTab,
   ProgressTab,
   VideosTab,
   WeekChecklist,
@@ -39,15 +33,14 @@ import ToolsTab from "./ToolsTab";
 import type { StudentResourceData } from "@/lib/resources";
 
 type Tab =
-  | "class"
   | "course"
   | "videos"
+  | "library"
   | "homework"
   | "progress"
   | "fees"
   | "quiz"
   | "tools"
-  | "leave"
   | "ask";
 
 function fmt(d: string | null): string {
@@ -73,11 +66,13 @@ function fmtDate(d: string | null): string {
 export default function PortalClient({
   data,
   resources,
+  library,
 }: {
   data: PortalData;
   resources: StudentResourceData;
+  library: LibraryVideo[];
 }) {
-  const [tab, setTab] = useState<Tab>("class");
+  const [tab, setTab] = useState<Tab>("course");
   const [showBio, setShowBio] = useState(false);
   const saveSub = useCallback(saveStudentSubscription, []);
   usePushSubscription(saveSub);
@@ -93,15 +88,14 @@ export default function PortalClient({
   );
 
   const tabs: [Tab, string, string, boolean][] = [
-    ["class", "Class", "🏫", false],
     ["course", "Course", "🎓", false],
-    ["videos", "Videos", "🎬", false],
+    ["videos", "Lessons", "🎬", false],
+    ["library", "Library", "📚", false],
     ["homework", "Homework", "📝", hwDue > 0],
     ["progress", "Progress", "📈", false],
     ["fees", "Fees", "💳", feeAlert],
     ["quiz", "Quiz", "🧠", false],
     ["tools", "Tools", "🔑", toolLive],
-    ["leave", "Leave", "🌴", false],
     ["ask", "Ask", "💬", false],
   ];
 
@@ -140,23 +134,22 @@ export default function PortalClient({
           only warning before the account locks. */}
       <FeeDueBanner data={data} onPay={() => setTab("fees")} />
 
-      {tab === "class" && (
+      {tab === "course" && (
         <>
-          <ClassTab data={data} />
           {data.enrollment && <WeekChecklist data={data} onOpen={setTab} />}
+          <CourseTab data={data} />
         </>
       )}
-      {tab === "course" && <CourseTab data={data} />}
       {tab === "videos" && <VideosTab data={data} />}
+      {tab === "library" && <LibraryTab videos={library} />}
       {tab === "homework" && <HomeworkTab data={data} />}
       {tab === "progress" && <ProgressTab data={data} />}
       {tab === "fees" && <FeesTab data={data} />}
       {tab === "quiz" && <QuizTab data={data} />}
       {tab === "tools" && <ToolsTab data={resources} />}
-      {tab === "leave" && <LeaveTab data={data} />}
       {tab === "ask" && <AskTab data={data} />}
 
-      {/* Bottom tab bar (mobile-first). 9 tabs scroll horizontally. */}
+      {/* Bottom tab bar (mobile-first). Tabs scroll horizontally. */}
       <nav
         className="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-white border-t border-slate-200 flex overflow-x-auto no-scrollbar"
         style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
@@ -262,192 +255,6 @@ function InstructorRow({ person }: { person: Instructor }) {
         )}
       </div>
     </li>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Next-class countdown
-// ---------------------------------------------------------------------------
-function NextClassCard({ next }: { next: NextClass }) {
-  const target = new Date(next.scheduled_at).getTime();
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  const diff = target - now;
-  const started = diff <= 0;
-
-  const totalSec = Math.max(0, Math.floor(diff / 1000));
-  const days = Math.floor(totalSec / 86400);
-  const hours = Math.floor((totalSec % 86400) / 3600);
-  const minutes = Math.floor((totalSec % 3600) / 60);
-  const seconds = totalSec % 60;
-
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const units: [number, string][] = [
-    [days, "days"],
-    [hours, "hrs"],
-    [minutes, "min"],
-    [seconds, "sec"],
-  ];
-
-  return (
-    <Card>
-      <div className="text-center">
-        <p className="text-slate-500 text-sm mb-1">Next class</p>
-        <h2 className="text-lg font-bold mb-1">{next.title}</h2>
-        <p className="text-slate-600 text-sm mb-4">{fmt(next.scheduled_at)}</p>
-
-        {started ? (
-          <p className="text-emerald-600 font-semibold">
-            Starting any moment — refresh for the code.
-          </p>
-        ) : (
-          <div className="flex justify-center gap-2">
-            {units.map(([value, label]) => (
-              <div
-                key={label}
-                className="rounded-xl bg-brand-50 px-3 py-2 min-w-[58px]"
-              >
-                <div className="text-2xl font-bold text-brand-700 tabular-nums">
-                  {pad(value)}
-                </div>
-                <div className="text-[10px] uppercase tracking-wide text-slate-400">
-                  {label}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Class / check-in
-// ---------------------------------------------------------------------------
-function ClassTab({ data }: { data: PortalData }) {
-  const router = useRouter();
-  const [code, setCode] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [meetLink, setMeetLink] = useState<string | null>(null);
-
-  const c = data.checkin;
-
-  const emailNote = data.email ? (
-    <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-4 text-left">
-      ⚠️ Join Google Meet signed in as{" "}
-      <span className="font-semibold break-all">{data.email}</span>. Joining with a
-      different email will not be let in.
-    </p>
-  ) : (
-    <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 mb-4 text-left">
-      Ask your tutor which email to use for Google Meet — joining with the wrong email
-      won&apos;t be let in.
-    </p>
-  );
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    const res = await checkIn(code);
-    setLoading(false);
-    if (res.ok) {
-      setMeetLink(res.meetLink);
-      router.refresh();
-    } else {
-      setError(res.error);
-    }
-  }
-
-  if (c.kind === "no-enrollment") {
-    return <NotEnrolledCard />;
-  }
-
-  if (c.kind === "blocked") {
-    return <FeeBlockedCard data={data} monthNo={c.monthNo} remaining={c.remaining} dueDate={c.dueDate} />;
-  }
-
-  if (c.kind === "no-session") {
-    return (
-      <>
-        {data.nextClass && <NextClassCard next={data.nextClass} />}
-        <Card>
-          <div className="text-center">
-            <div className="text-5xl mb-3">😴</div>
-            <h2 className="text-lg font-bold mb-1">No class live right now</h2>
-            <p className="text-slate-600">
-              {data.nextClass
-                ? "Come back at class time and refresh to check in."
-                : "Come back at class time and refresh."}
-            </p>
-          </div>
-        </Card>
-      </>
-    );
-  }
-
-  const link = meetLink ?? (c.kind === "present" ? c.meetLink : null);
-  if (link) {
-    return (
-      <Card>
-        <div className="text-center">
-          <div className="text-5xl mb-3">✅</div>
-          <h2 className="text-lg font-bold mb-1">You&apos;re marked present</h2>
-          <p className="text-slate-600 mb-4">
-            {c.kind === "present" ? c.sessionTitle : "See you in class!"}
-          </p>
-          {emailNote}
-          <a
-            href={link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block w-full rounded-2xl bg-green-600 px-5 py-4 text-white text-lg font-bold shadow-sm active:scale-[0.98] transition"
-          >
-            Join the class →
-          </a>
-        </div>
-      </Card>
-    );
-  }
-
-  // can-checkin
-  return (
-    <Card>
-      <div className="text-center mb-4">
-        <div className="text-4xl mb-2">👋</div>
-        <h2 className="text-lg font-bold">{c.sessionTitle}</h2>
-        <p className="text-slate-500 text-sm">Enter the code your tutor said</p>
-      </div>
-      {emailNote}
-      <form onSubmit={submit} className="space-y-4">
-        <input
-          type="text"
-          autoComplete="off"
-          autoCapitalize="none"
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          placeholder="Today's code"
-          className="w-full rounded-2xl border border-slate-300 px-4 py-4 text-lg text-center tracking-wide focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none"
-        />
-        {error && (
-          <p className="text-center text-rose-600 text-sm font-medium">{error}</p>
-        )}
-        <button
-          type="submit"
-          disabled={loading || code.trim().length === 0}
-          className="w-full rounded-2xl bg-brand-600 px-5 py-4 text-white text-lg font-bold shadow-sm active:scale-[0.98] transition disabled:opacity-50"
-        >
-          {loading ? "Checking…" : "Mark me present"}
-        </button>
-      </form>
-    </Card>
   );
 }
 
@@ -941,173 +748,6 @@ function QuizResultCard({
         Back to quizzes
       </button>
     </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Leave — appeal for an absence from the next class (before it starts)
-// ---------------------------------------------------------------------------
-function LeaveTab({ data }: { data: PortalData }) {
-  const router = useRouter();
-  const [pending, start] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const [sent, setSent] = useState(false);
-  const [reason, setReason] = useState("");
-
-  // A student can only appeal while there is an upcoming class to appeal from.
-  const hasUpcoming = !!data.nextClass;
-  // Block a second request for the same upcoming class (matches the server rule).
-  const alreadyPending =
-    hasUpcoming && data.leaves.some((l) => l.status === "pending");
-
-  function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setSent(false);
-    if (reason.trim().length === 0) {
-      setError("Please tell your tutor why you need leave.");
-      return;
-    }
-    const fd = new FormData();
-    fd.set("reason", reason);
-    start(async () => {
-      const res = await submitLeaveRequest(fd);
-      if (res.error) {
-        setError(res.error);
-        return;
-      }
-      setReason("");
-      setSent(true);
-      router.refresh();
-    });
-  }
-
-  const statusMeta: Record<
-    PortalData["leaves"][number]["status"],
-    { label: string; chip: string }
-  > = {
-    pending: { label: "waiting", chip: "bg-amber-100 text-amber-700" },
-    approved: { label: "approved ✅", chip: "bg-emerald-100 text-emerald-700" },
-    rejected: { label: "rejected ❌", chip: "bg-rose-100 text-rose-700" },
-  };
-
-  return (
-    <>
-      {/* Countdown to the class you'd be missing */}
-      {data.nextClass ? (
-        <NextClassCard next={data.nextClass} />
-      ) : (
-        <Card>
-          <div className="text-center py-4">
-            <div className="text-4xl mb-2">🗓️</div>
-            <h2 className="text-lg font-bold mb-1">No upcoming class scheduled</h2>
-            <p className="text-slate-500 text-sm">
-              You can still send a leave note below — your tutor will see it.
-            </p>
-          </div>
-        </Card>
-      )}
-
-      <Card>
-        <h2 className="font-bold mb-1">🌴 Request leave</h2>
-        <p className="text-slate-500 text-sm mb-3">
-          Can&apos;t attend the next class? Appeal here{" "}
-          <span className="font-semibold">before it starts</span>. Your tutor will
-          approve or reject it and can leave you a note. We record the exact time
-          you send this.
-        </p>
-
-        {alreadyPending ? (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
-            You already have a leave request waiting for a decision. You&apos;ll see
-            the reply below.
-          </div>
-        ) : (
-          <form onSubmit={onSubmit} className="space-y-2">
-            <textarea
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={4}
-              placeholder="Why do you need leave? (e.g. family event, sick, exam)"
-              className="w-full rounded-xl border border-slate-300 px-3 py-2.5 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none"
-            />
-            {error && <p className="text-rose-600 text-sm">{error}</p>}
-            {sent && (
-              <p className="text-emerald-600 text-sm">
-                Leave request sent! Your tutor will review it.
-              </p>
-            )}
-            <button
-              type="submit"
-              disabled={pending || reason.trim().length === 0}
-              className="w-full rounded-xl bg-brand-600 px-4 py-2.5 text-white font-semibold active:scale-[0.98] transition disabled:opacity-50"
-            >
-              {pending ? "Sending…" : "Send leave request"}
-            </button>
-          </form>
-        )}
-      </Card>
-
-      <Card>
-        <h2 className="font-bold mb-3">Your leave requests</h2>
-        {data.leaves.length === 0 ? (
-          <p className="text-slate-400 text-sm">
-            You haven&apos;t requested any leave yet.
-          </p>
-        ) : (
-          <ul className="space-y-3">
-            {data.leaves.map((l) => {
-              const meta = statusMeta[l.status];
-              return (
-                <li key={l.id} className="rounded-xl border border-slate-200 p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      {l.lesson_title ? (
-                        <p className="text-xs font-semibold text-brand-700">
-                          {l.lesson_title}
-                          {l.lesson_at && (
-                            <span className="text-slate-400 font-normal">
-                              {" "}
-                              · {fmt(l.lesson_at)}
-                            </span>
-                          )}
-                        </p>
-                      ) : (
-                        <p className="text-xs font-semibold text-slate-400">
-                          General leave
-                        </p>
-                      )}
-                      <p className="text-sm whitespace-pre-line mt-0.5">{l.reason}</p>
-                      <p className="text-slate-400 text-xs mt-1">
-                        Sent {fmt(l.created_at)}
-                      </p>
-                    </div>
-                    <span
-                      className={`shrink-0 text-xs rounded-full px-2 py-0.5 font-medium ${meta.chip}`}
-                    >
-                      {meta.label}
-                    </span>
-                  </div>
-                  {l.feedback && (
-                    <div className="mt-2 rounded-lg bg-brand-50 border border-brand-100 p-2.5">
-                      <p className="text-xs font-semibold text-brand-700 mb-0.5">
-                        Tutor&apos;s note
-                      </p>
-                      <p className="text-sm whitespace-pre-line text-slate-700">
-                        {l.feedback}
-                      </p>
-                      {l.reviewed_at && (
-                        <p className="text-slate-400 text-xs mt-1">{fmt(l.reviewed_at)}</p>
-                      )}
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </Card>
-    </>
   );
 }
 

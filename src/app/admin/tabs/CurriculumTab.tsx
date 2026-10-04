@@ -9,13 +9,39 @@ import {
   updateWeekend,
 } from "@/actions/curriculum";
 import type { Curriculum, VideoRow, WeekendRow } from "@/lib/curriculum";
+import { CONTENT_KINDS, type ContentKind } from "@/lib/constants";
 import { Card, Modal, Msg, btn, fieldClass, useAction } from "../ui";
 
-const KIND_LABEL: Record<string, string> = {
-  topic: "Video 1 · Topic",
-  hands_on: "Video 2 · Hands-on",
-  extra: "Extra",
+const KIND_ICON: Record<ContentKind, string> = {
+  topic: "▶",
+  hands_on: "▶",
+  extra: "▶",
+  slides: "📊",
+  code: "</>",
+  doc: "📄",
 };
+
+/** The type picker: videos first, then the link kinds. */
+function KindSelect({ defaultValue }: { defaultValue: ContentKind }) {
+  return (
+    <select name="kind" defaultValue={defaultValue} className={fieldClass()}>
+      <optgroup label="Videos">
+        {(["topic", "hands_on", "extra"] as const).map((k) => (
+          <option key={k} value={k}>
+            {CONTENT_KINDS[k].label}
+          </option>
+        ))}
+      </optgroup>
+      <optgroup label="Other content">
+        {(["slides", "code", "doc"] as const).map((k) => (
+          <option key={k} value={k}>
+            {CONTENT_KINDS[k].label}
+          </option>
+        ))}
+      </optgroup>
+    </select>
+  );
+}
 
 export default function CurriculumTab({
   curriculum,
@@ -59,13 +85,14 @@ export default function CurriculumTab({
           </button>
         </div>
         <p className="text-xs text-slate-400 mt-2">
-          Shared by every intake of Batch {level}: add a weekend&apos;s 2 videos once and all intakes get them.
-          Students see a weekend&apos;s videos from 7 days before its class.
+          Shared by every intake of Batch {level}: add a weekend&apos;s content once and all intakes get them.
+          Pick the right type for each item: videos get a play button and a &ldquo;watched&rdquo; tick; slides,
+          code and notes get their own icon and just open.
         </p>
       </Card>
 
       {weekends.map((w) => {
-        const main = w.videos.filter((v) => v.kind !== "extra").length;
+        const main = w.videos.filter((v) => v.kind === "topic" || v.kind === "hands_on").length;
         return (
           <Card key={w.id}>
             <div className="flex items-start justify-between gap-2">
@@ -90,8 +117,8 @@ export default function CurriculumTab({
             </p>
             <div className="mt-3">
               <p className="text-xs font-medium text-slate-500 mb-1">
-                Videos{" "}
-                <span className={main >= 2 ? "text-emerald-600" : "text-amber-600"}>({main} of 2 added)</span>
+                Content{" "}
+                <span className={main >= 2 ? "text-emerald-600" : "text-amber-600"}>({main} of 2 main videos)</span>
               </p>
               <ul className="divide-y text-sm">
                 {w.videos.map((v) => (
@@ -156,11 +183,7 @@ function VideoItem({ video }: { video: VideoRow }) {
         >
           <input name="title" defaultValue={video.title} className={fieldClass()} />
           <input name="url" defaultValue={video.url} className={fieldClass()} />
-          <select name="kind" defaultValue={video.kind} className={fieldClass()}>
-            <option value="topic">Video 1 · Topic</option>
-            <option value="hands_on">Video 2 · Hands-on</option>
-            <option value="extra">Extra</option>
-          </select>
+          <KindSelect defaultValue={video.kind} />
           <button type="submit" disabled={act.pending} className={btn.dark}>
             Save
           </button>
@@ -171,11 +194,14 @@ function VideoItem({ video }: { video: VideoRow }) {
   }
   return (
     <li className="py-1.5 flex items-center justify-between gap-2">
-      <div className="min-w-0">
-        <a href={video.url} target="_blank" rel="noreferrer" className="font-medium text-brand-700 underline truncate block">
-          {video.title}
-        </a>
-        <span className="text-xs text-slate-400">{KIND_LABEL[video.kind]}</span>
+      <div className="min-w-0 flex items-center gap-2">
+        <span className="w-6 shrink-0 text-center text-xs text-slate-500">{KIND_ICON[video.kind]}</span>
+        <div className="min-w-0">
+          <a href={video.url} target="_blank" rel="noreferrer" className="font-medium text-brand-700 underline truncate block">
+            {video.title}
+          </a>
+          <span className="text-xs text-slate-400">{CONTENT_KINDS[video.kind].label}</span>
+        </div>
       </div>
       <div className="flex gap-1.5 shrink-0">
         <button onClick={() => setEditing(true)} className={btn.small}>
@@ -195,13 +221,13 @@ function VideoItem({ video }: { video: VideoRow }) {
   );
 }
 
-function AddVideoForm({ weekendId, nextKind }: { weekendId: number; nextKind: string }) {
+function AddVideoForm({ weekendId, nextKind }: { weekendId: number; nextKind: ContentKind }) {
   const act = useAction();
   const [open, setOpen] = useState(false);
   if (!open) {
     return (
       <button onClick={() => setOpen(true)} className={`${btn.small} mt-2`}>
-        + Add video
+        + Add content
       </button>
     );
   }
@@ -210,19 +236,15 @@ function AddVideoForm({ weekendId, nextKind }: { weekendId: number; nextKind: st
       action={(fd) => act.run(() => addVideo(weekendId, fd), { onDone: () => setOpen(false) })}
       className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto_auto] gap-2 mt-2"
     >
-      <input name="title" placeholder="Video title" className={fieldClass()} />
-      <input name="url" placeholder="YouTube / Drive link" className={fieldClass()} />
-      <select name="kind" defaultValue={nextKind} className={fieldClass()}>
-        <option value="topic">Video 1 · Topic</option>
-        <option value="hands_on">Video 2 · Hands-on</option>
-        <option value="extra">Extra</option>
-      </select>
+      <input name="title" placeholder="Title" className={fieldClass()} />
+      <input name="url" placeholder="YouTube / Slides / GitHub / Drive link" className={fieldClass()} />
+      <KindSelect defaultValue={nextKind} />
       <button type="submit" disabled={act.pending} className={btn.primary}>
         Add
       </button>
       <label className="flex items-center gap-2 text-sm text-slate-600 sm:col-span-4">
         <input name="notify_email" type="checkbox" defaultChecked className="h-4 w-4 accent-brand-600" />
-        Email students about this video
+        Email students about this
       </label>
       <Msg error={act.error} />
     </form>

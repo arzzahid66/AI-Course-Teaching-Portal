@@ -8,7 +8,13 @@ import {
   type PortalData,
   type PortalWeekend,
 } from "@/actions/student";
-import { FEE_BANNER_DISMISS_PREFIX, FEE_BANNER_LEAD_DAYS } from "@/lib/constants";
+import type { LibraryVideo } from "@/actions/library";
+import {
+  CONTENT_KINDS,
+  FEE_BANNER_DISMISS_PREFIX,
+  FEE_BANNER_LEAD_DAYS,
+  type ContentKind,
+} from "@/lib/constants";
 
 // ---------------------------------------------------------------------------
 // Shared bits
@@ -98,7 +104,7 @@ export function NotEnrolledCard() {
         <div className="text-5xl mb-3">📋</div>
         <h2 className="text-lg font-bold mb-1">You&apos;re not in a batch yet</h2>
         <p className="text-slate-600 text-sm">
-          Your tutor will add you to the next batch. Once you&apos;re enrolled, your classes, videos, homework and fees show up here.
+          Your tutor will add you to the next batch. Once you&apos;re enrolled, your videos, quizzes, homework and fees show up here.
         </p>
       </div>
     </Card>
@@ -182,33 +188,6 @@ export function HowToPay({
         </p>
       </div>
     </div>
-  );
-}
-
-export function FeeBlockedCard({
-  data,
-  monthNo,
-  remaining,
-  dueDate,
-}: {
-  data: PortalData;
-  monthNo: number;
-  remaining: number;
-  dueDate: string;
-}) {
-  return (
-    <Card>
-      <div className="text-center mb-4">
-        <div className="text-5xl mb-3">⛔️</div>
-        <p className="text-lg font-semibold text-rose-600 mb-1">
-          Month {monthNo} fee is unpaid — {rs(remaining)}
-        </p>
-        <p className="text-slate-600 text-sm">
-          It was due on {fmtDay(dueDate)}. Pay it to check in to class again.
-        </p>
-      </div>
-      <HowToPay data={data} amount={remaining} monthLabel={`Month ${monthNo}`} />
-    </Card>
   );
 }
 
@@ -320,7 +299,7 @@ export function FeeDueBanner({ data, onPay }: { data: PortalData; onPay: () => v
           ? `is unpaid. It was due on ${fmtDay(next.due_date, true)}.`
           : `is due on ${fmtDay(next.due_date, true)}.`}{" "}
         Pay by <b>{fmtDay(next.grace_until, true)}</b>, otherwise your account is deactivated and
-        you lose access to classes, videos and homework.
+        you lose access to videos, quizzes and homework.
       </p>
       <button
         onClick={onPay}
@@ -335,17 +314,17 @@ export function FeeDueBanner({ data, onPay }: { data: PortalData; onPay: () => v
 }
 
 // ---------------------------------------------------------------------------
-// This week's checklist (Class tab)
+// This week's checklist (top of the Course tab)
 // ---------------------------------------------------------------------------
 export function WeekChecklist({ data, onOpen }: { data: PortalData; onOpen: (tab: "videos" | "homework") => void }) {
   const week = data.weekends.find((w) => w.is_current) ?? null;
   if (!week) return null;
-  const main = week.videos.filter((v) => v.kind !== "extra");
+  const main = week.videos.filter((v) => v.kind === "topic" || v.kind === "hands_on");
   const sub = week.submission;
   const hwDone = sub && sub.status !== "needs_changes";
 
   const item = (done: boolean, label: string, hint: string, tab: "videos" | "homework") => (
-    <li>
+    <li key={label}>
       <button onClick={() => onOpen(tab)} className="w-full flex items-center gap-3 py-2 text-left">
         <span
           className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-sm ${
@@ -371,7 +350,7 @@ export function WeekChecklist({ data, onOpen }: { data: PortalData; onOpen: (tab
         {main.length === 0
           ? item(false, "Recorded videos", "Your tutor hasn't added this week's videos yet", "videos")
           : main.map((v, i) =>
-              item(v.watched, `Watch video ${i + 1}: ${v.title}`, "Before Sunday's class", "videos")
+              item(v.watched, `Watch video ${i + 1}: ${v.title}`, "This week's lesson", "videos")
             )}
         {week.homework &&
           item(
@@ -405,7 +384,7 @@ export function CourseTab({ data }: { data: PortalData }) {
         </p>
         <h2 className="text-lg font-bold">{e.levelTitle}</h2>
         {e.promise && <p className="text-slate-600 text-sm mt-1">{e.promise}</p>}
-        <p className="text-xs text-slate-400 mt-2">Live class every Sunday · 2 recorded videos every week</p>
+        <p className="text-xs text-slate-400 mt-2">2 recorded videos every week · quizzes · homework</p>
       </Card>
 
       {data.weekends.map((w) => (
@@ -495,11 +474,11 @@ function SlideLinks({ slides }: { slides: PortalWeekend["slides"] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Videos
+// Lessons — each weekend's videos, slides, code and notes
 // ---------------------------------------------------------------------------
 export function VideosTab({ data }: { data: PortalData }) {
   if (!data.enrollment) return <NotEnrolledCard />;
-  // The whole course library: every weekend's videos, available from day one.
+  // The whole course: every weekend's content, available from day one.
   const withVideos = data.weekends.filter((w) => w.videos.length > 0);
   const current = withVideos.find((w) => w.is_current);
   const ordered = [...(current ? [current] : []), ...withVideos.filter((w) => w !== current)];
@@ -508,7 +487,7 @@ export function VideosTab({ data }: { data: PortalData }) {
     return (
       <Card>
         <p className="text-slate-600 text-center">
-          Your tutor hasn&apos;t added any videos yet. They appear here as soon as they do.
+          Your tutor hasn&apos;t added any lessons yet. They appear here as soon as they do.
         </p>
       </Card>
     );
@@ -519,14 +498,14 @@ export function VideosTab({ data }: { data: PortalData }) {
         <Card key={w.id}>
           <p className="text-xs text-slate-400 font-medium">
             Weekend {w.weekend_no}
-            {w.class_at && ` · class ${fmtWhen(w.class_at)}`}
+            {w.class_at && ` · ${fmtWhen(w.class_at)}`}
             {w.is_current && <span className="text-brand-600"> · this week</span>}
           </p>
           <h2 className="font-bold mb-2">{w.title}</h2>
           <ul className="divide-y">
-            {w.videos.map((v) => (
-              <VideoRow key={v.id} video={v} />
-            ))}
+            {w.videos.map((v) =>
+              CONTENT_KINDS[v.kind]?.isVideo ? <VideoRow key={v.id} video={v} /> : <LinkRow key={v.id} item={v} />
+            )}
           </ul>
           {w.slides.length > 0 && <SlideLinks slides={w.slides} />}
         </Card>
@@ -554,7 +533,7 @@ function VideoRow({ video }: { video: PortalWeekend["videos"][number] }) {
     });
   }
 
-  const kind = video.kind === "topic" ? "Video 1 · Main topic" : video.kind === "hands_on" ? "Video 2 · Hands-on build" : "Extra";
+  const kind = CONTENT_KINDS[video.kind]?.label ?? "Video";
   return (
     <li className="py-2.5">
       <div className="flex items-center gap-3">
@@ -583,6 +562,90 @@ function VideoRow({ video }: { video: PortalWeekend["videos"][number] }) {
       </div>
       {error && <p className="text-rose-600 text-xs mt-1">{error}</p>}
     </li>
+  );
+}
+
+/** Icon tile per non-video kind, so slides never look like something to play. */
+const LINK_STYLE: Partial<Record<ContentKind, { icon: string; tile: string }>> = {
+  slides: { icon: "📊", tile: "bg-amber-100 text-amber-700" },
+  code: { icon: "</>", tile: "bg-slate-800 text-white text-xs font-bold" },
+  doc: { icon: "📄", tile: "bg-brand-50 text-brand-700" },
+};
+
+/** Slides, code or notes: opens the link; nothing to tick off. */
+function LinkRow({ item }: { item: PortalWeekend["videos"][number] }) {
+  const style = LINK_STYLE[item.kind] ?? LINK_STYLE.doc!;
+  return (
+    <li className="py-2.5">
+      <a href={item.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3">
+        <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${style.tile}`} aria-hidden>
+          {style.icon}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-medium text-sm">{item.title}</span>
+          <span className="block text-xs text-slate-400">{CONTENT_KINDS[item.kind]?.label}</span>
+        </span>
+        <span className="shrink-0 text-xs rounded-full px-3 py-1.5 font-semibold border border-slate-300 text-slate-600">
+          Open ↗
+        </span>
+      </a>
+    </li>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Library — general videos for every student, grouped by category
+// ---------------------------------------------------------------------------
+export function LibraryTab({ videos }: { videos: LibraryVideo[] }) {
+  if (videos.length === 0) {
+    return (
+      <Card>
+        <div className="text-center py-4">
+          <div className="text-4xl mb-2">📚</div>
+          <h2 className="text-lg font-bold mb-1">The Library is empty</h2>
+          <p className="text-slate-500 text-sm">
+            Your tutor hasn&apos;t added any general videos yet. Check back soon.
+          </p>
+        </div>
+      </Card>
+    );
+  }
+  const groups = new Map<string, LibraryVideo[]>();
+  for (const v of videos) {
+    const key = v.category?.trim() || "General";
+    groups.set(key, [...(groups.get(key) ?? []), v]);
+  }
+  return (
+    <>
+      <Card>
+        <h2 className="font-bold mb-1">📚 Library</h2>
+        <p className="text-slate-500 text-sm">
+          Extra videos from your tutor, open to every student. Watch them any time.
+        </p>
+      </Card>
+      {[...groups.entries()].map(([category, list]) => (
+        <Card key={category}>
+          <h2 className="font-bold mb-2">{category}</h2>
+          <ul className="divide-y">
+            {list.map((v) => (
+              <li key={v.id} className="py-2.5">
+                <a href={v.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-red-600 text-white" aria-hidden>
+                    ▶
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium text-sm">{v.title}</span>
+                    {v.description && (
+                      <span className="block text-xs text-slate-500 whitespace-pre-line">{v.description}</span>
+                    )}
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ))}
+    </>
   );
 }
 
@@ -714,13 +777,11 @@ export function ProgressTab({ data }: { data: PortalData }) {
   const band = BAND[p.band];
 
   const missed: string[] = [];
-  if (p.attendance.absent > 0) missed.push(`${p.attendance.absent} class${p.attendance.absent > 1 ? "es" : ""} missed`);
   if (p.homework.missing > 0) missed.push(`${p.homework.missing} homework not submitted`);
   if (p.quiz.total - p.quiz.attempted > 0) missed.push(`${p.quiz.total - p.quiz.attempted} quiz not attempted`);
   if (p.videos.released - p.videos.watched > 0) missed.push(`${p.videos.released - p.videos.watched} video not marked watched`);
 
   const parts = [
-    { label: "Attendance", part: p.attendance, detail: `${p.attendance.present} of ${p.attendance.held - p.attendance.excused} classes${p.attendance.excused ? ` · ${p.attendance.excused} on leave` : ""}` },
     { label: "Homework", part: p.homework, detail: `${p.homework.marks} marks · ${p.homework.missing} missing${p.homework.awaiting ? ` · ${p.homework.awaiting} waiting for marks` : ""}` },
     { label: "Quiz", part: p.quiz, detail: `${p.quiz.attempted} of ${p.quiz.total} quizzes attempted (best score counts)` },
     { label: "Videos", part: p.videos, detail: `${p.videos.watched} of ${p.videos.released} watched` },
@@ -744,7 +805,7 @@ export function ProgressTab({ data }: { data: PortalData }) {
           <p className="text-xs text-slate-500 mt-2">Class average: {data.progress.classAverage}/100</p>
         )}
         {p.score == null && (
-          <p className="text-sm text-slate-500 mt-2">Your score starts after your first class.</p>
+          <p className="text-sm text-slate-500 mt-2">Your score starts once your first video, quiz or homework is due.</p>
         )}
       </Card>
 
@@ -776,7 +837,7 @@ export function ProgressTab({ data }: { data: PortalData }) {
           ))}
         </ul>
         <p className="text-xs text-slate-400 mt-4">
-          Only work that is already due counts. There are no fines — missing class or homework only lowers your score.
+          Only work that is already due counts. There are no fines — missing homework, quizzes or videos only lowers your score.
         </p>
       </Card>
     </>
@@ -790,7 +851,6 @@ export function FeesTab({ data }: { data: PortalData }) {
   if (!data.enrollment) return <NotEnrolledCard />;
   const { invoices, payments, total, paid, remaining } = data.fees;
   const nextDue = invoices.find((i) => i.remaining > 0) ?? null;
-  const absent = data.attendance.filter((a) => a.status === "absent").length;
 
   return (
     <>
@@ -866,34 +926,6 @@ export function FeesTab({ data }: { data: PortalData }) {
             ))}
           </ul>
         )}
-      </Card>
-
-      <Card>
-        <div className="flex items-baseline justify-between mb-2">
-          <h3 className="font-bold">Attendance</h3>
-          <span className={`text-sm ${absent ? "text-rose-600" : "text-slate-500"}`}>
-            {absent} absent
-          </span>
-        </div>
-        {data.attendance.length === 0 ? (
-          <p className="text-slate-400 text-sm">No classes yet.</p>
-        ) : (
-          <ul className="divide-y text-sm">
-            {data.attendance.map((a, i) => (
-              <li key={i} className="flex justify-between gap-2 py-1.5">
-                <span className="truncate">{a.title}</span>
-                <span
-                  className={
-                    a.status === "present" ? "text-emerald-600" : a.status === "excused" ? "text-violet-600" : "text-rose-600"
-                  }
-                >
-                  {a.status === "excused" ? "on leave" : a.status}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="text-xs text-slate-400 mt-2">No fines — absences only lower your progress score.</p>
       </Card>
     </>
   );

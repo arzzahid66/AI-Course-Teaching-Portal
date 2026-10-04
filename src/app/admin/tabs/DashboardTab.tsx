@@ -1,18 +1,8 @@
 "use client";
 
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-} from "recharts";
 import type { DashboardStats } from "@/actions/batches";
 import type { BatchRow } from "@/lib/course";
-import { Card, ChartTooltip, MiniBar, StatCard, fmt, fmtDay, usePrivacy, useRs } from "../ui";
+import { Card, MiniBar, StatCard, fmtDay, usePrivacy, useRs } from "../ui";
 
 export default function DashboardTab({
   batch,
@@ -26,12 +16,6 @@ export default function DashboardTab({
   // The bar's width is itself a number — leave it empty while amounts are hidden.
   const collectedPct =
     privacy || stats.fees.expected <= 0 ? 0 : (stats.fees.collected / stats.fees.expected) * 100;
-  const chartData = stats.attendance.map((a, i) => ({
-    name: `W${i + 1}`,
-    Present: a.present,
-    Excused: a.excused,
-    Absent: a.absent,
-  }));
 
   return (
     <>
@@ -91,37 +75,6 @@ export default function DashboardTab({
               ))}
             </ul>
           </>
-        )}
-      </Card>
-
-      <Card>
-        <div className="flex items-baseline justify-between gap-2 mb-3">
-          <h2 className="font-bold">Attendance by class</h2>
-          {stats.nextClass && (
-            <span className="text-xs text-slate-500">
-              Next: {stats.nextClass.title.split(" — ")[0]} · {fmt(stats.nextClass.scheduled_at)}
-            </span>
-          )}
-        </div>
-        {chartData.length === 0 ? (
-          <p className="text-slate-400 text-sm py-8 text-center">
-            Attendance shows here after the first class is closed.
-          </p>
-        ) : (
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="name" tick={{ fontSize: 12, fill: "#64748b" }} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "#64748b" }} />
-                <Tooltip content={<ChartTooltip />} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="Present" stackId="a" fill="#10b981" />
-                <Bar dataKey="Excused" stackId="a" fill="#a78bfa" />
-                <Bar dataKey="Absent" stackId="a" fill="#f43f5e" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
         )}
       </Card>
 

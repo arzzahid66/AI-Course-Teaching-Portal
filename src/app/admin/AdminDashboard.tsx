@@ -20,15 +20,10 @@ import {
   answerQuestion,
   setQuestionStatus,
   deleteQuestion,
-  reviewLeaveRequest,
-  deleteLeaveRequest,
   clearLoginLogs,
   adminLogout,
   type StudentRow,
-  type SessionRow,
-  type AttendeeRow,
   type QuestionRow,
-  type LeaveRow,
   type LoginLogRow,
 } from "@/actions/admin";
 import {
@@ -54,6 +49,7 @@ import type { DashboardStats } from "@/actions/batches";
 import { setPrivacyMode, type FeeBoard } from "@/actions/fees";
 import type { ResourceBoard } from "@/lib/resources";
 import type { HomeworkBoard } from "@/actions/curriculum";
+import type { LibraryVideo } from "@/actions/library";
 import type { BatchRow, PaymentAccount, ProgressRow } from "@/lib/course";
 import type { Curriculum } from "@/lib/curriculum";
 import {
@@ -66,9 +62,9 @@ import { Card, EmailStudentButton, PrivacyProvider, fieldClass, fmt, genderBucke
 import DashboardTab from "./tabs/DashboardTab";
 import IntakesTab from "./tabs/IntakesTab";
 import StudentsTab from "./tabs/StudentsTab";
-import ClassesTab from "./tabs/ClassesTab";
 import FeesTab from "./tabs/FeesTab";
 import CurriculumTab from "./tabs/CurriculumTab";
+import LibraryTab from "./tabs/LibraryTab";
 import HomeworkTab from "./tabs/HomeworkTab";
 import ProgressTab from "./tabs/ProgressTab";
 import ResourcesTab from "./tabs/ResourcesTab";
@@ -77,22 +73,20 @@ type Tab =
   | "dashboard"
   | "intakes"
   | "students"
-  | "classes"
   | "fees"
   | "curriculum"
+  | "library"
   | "homework"
   | "progress"
   | "quiz"
   | "tools"
   | "questions"
-  | "leave"
   | "logs";
 
 /** Everything the admin page loads for the selected intake (null when there is none yet). */
 export type BatchData = {
   batch: BatchRow;
   stats: DashboardStats;
-  sessions: SessionRow[];
   feeBoard: FeeBoard;
   homework: HomeworkBoard;
   progress: ProgressRow[];
@@ -102,13 +96,10 @@ export default function AdminDashboard({
   batches,
   batchData,
   students,
-  openSession,
-  attendees,
   curriculum,
   paymentAccounts,
   whatsapp,
   questions,
-  leaves,
   quizzes,
   quizRequests,
   quizScoreboard,
@@ -116,17 +107,15 @@ export default function AdminDashboard({
   loginLogs,
   resourceBoard: initialResourceBoard,
   privacy: initialPrivacy,
+  library,
 }: {
   batches: BatchRow[];
   batchData: BatchData | null;
   students: StudentRow[];
-  openSession: SessionRow | null;
-  attendees: AttendeeRow[];
   curriculum: Curriculum;
   paymentAccounts: PaymentAccount[];
   whatsapp: string;
   questions: QuestionRow[];
-  leaves: LeaveRow[];
   quizzes: AdminQuizRow[];
   quizRequests: QuizReattemptRow[];
   quizScoreboard: QuizScoreboard;
@@ -134,6 +123,7 @@ export default function AdminDashboard({
   loginLogs: LoginLogRow[];
   resourceBoard: ResourceBoard;
   privacy: boolean;
+  library: LibraryVideo[];
 }) {
   const [tab, setTab] = useState<Tab>(batchData ? "dashboard" : "intakes");
   // Privacy Mode is flipped optimistically so the screen masks on the very next
@@ -160,13 +150,12 @@ export default function AdminDashboard({
 
   const batch = batchData?.batch ?? null;
   const openQuestions = questions.filter((q) => q.status === "open").length;
-  const pendingLeaves = leaves.filter((l) => l.status === "pending").length;
   const pendingQuizReqs = quizRequests.filter((r) => r.status === "pending").length;
   // ---- Shared tools: kept current for the whole admin screen -------------
   // The board lives up here rather than inside ResourcesTab for one reason:
   // the Tools badge has to light up while the tutor is looking at a DIFFERENT
   // tab. A student sitting on the claude.ai code screen is waiting on a
-  // person, and that person is usually on Fees or Classes when it lands.
+  // person, and that person is usually on Fees or Homework when it lands.
   // Polling inside ResourcesTab only ran while that tab was already open.
   const [resourceBoard, setResourceBoard] = useState(initialResourceBoard);
   useEffect(() => setResourceBoard(initialResourceBoard), [initialResourceBoard]);
@@ -195,18 +184,17 @@ export default function AdminDashboard({
     ["dashboard", "Dashboard", 0],
     ["intakes", "Intakes", 0],
     ["students", "Students", 0],
-    ["classes", "Classes", 0],
     ["fees", "Fees", 0],
     ["curriculum", "Curriculum", 0],
+    ["library", "Library", 0],
     ["homework", "Homework", toMark],
     ["progress", "Progress", 0],
     ["quiz", "Quiz", pendingQuizReqs],
     ["tools", "Tools", toolsWaiting],
     ["questions", "Questions", openQuestions],
-    ["leave", "Leave", pendingLeaves],
     ["logs", "Logs", 0],
   ];
-  const needsBatch: Tab[] = ["dashboard", "classes", "fees", "homework", "progress"];
+  const needsBatch: Tab[] = ["dashboard", "fees", "homework", "progress"];
 
   return (
     <main className="min-h-screen max-w-3xl mx-auto p-4 sm:p-6">
@@ -292,14 +280,6 @@ export default function AdminDashboard({
           {tab === "dashboard" && batchData && <DashboardTab batch={batchData.batch} stats={batchData.stats} />}
           {tab === "intakes" && <IntakesTab batches={batches} selectedId={batch?.id ?? null} />}
           {tab === "students" && <StudentsTab students={students} batches={batches} batch={batch} />}
-          {tab === "classes" && batchData && (
-            <ClassesTab
-              batch={batchData.batch}
-              openSession={openSession}
-              attendees={attendees}
-              sessions={batchData.sessions}
-            />
-          )}
           {tab === "fees" && batchData && (
             <FeesTab
               batch={batchData.batch}
@@ -309,6 +289,7 @@ export default function AdminDashboard({
             />
           )}
           {tab === "curriculum" && <CurriculumTab curriculum={curriculum} initialLevel={batch?.level ?? 1} />}
+          {tab === "library" && <LibraryTab videos={library} />}
           {tab === "homework" && batchData && <HomeworkTab board={batchData.homework} />}
           {tab === "progress" && batchData && <ProgressTab batch={batchData.batch} rows={batchData.progress} />}
           {tab === "quiz" && (
@@ -328,7 +309,6 @@ export default function AdminDashboard({
             />
           )}
           {tab === "questions" && <QuestionsTab questions={questions} />}
-          {tab === "leave" && <LeaveTab leaves={leaves} />}
           {tab === "logs" && <LogsTab logs={loginLogs} />}
         </>
       )}
@@ -754,234 +734,6 @@ function QuestionItem({ q }: { q: QuestionRow }) {
             Delete
           </button>
         </div>
-      )}
-      {error && <p className="text-rose-600 text-xs mt-1">{error}</p>}
-    </li>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Leave (students appeal for an absence; tutor approves / rejects + feedback)
-// ---------------------------------------------------------------------------
-function LeaveTab({ leaves }: { leaves: LeaveRow[] }) {
-  const pending = leaves.filter((l) => l.status === "pending");
-  const decided = leaves.filter((l) => l.status !== "pending");
-
-  return (
-    <>
-      <Card>
-        <div className="flex items-center justify-between">
-          <h2 className="font-bold">Leave requests</h2>
-          <span className="text-xs rounded-full bg-amber-100 text-amber-700 px-2.5 py-1 font-semibold">
-            {pending.length} waiting
-          </span>
-        </div>
-        <p className="text-slate-500 text-sm mt-1">
-          Absence appeals students sent before a class. Approve or reject each one
-          and leave a note — the student sees your decision on their Leave tab.
-        </p>
-      </Card>
-
-      <Card>
-        <h2 className="font-bold mb-3">🌴 Waiting for a decision ({pending.length})</h2>
-        <ul className="divide-y">
-          {pending.map((l) => (
-            <LeaveItem key={l.id} leave={l} />
-          ))}
-          {pending.length === 0 && (
-            <li className="py-6 text-center text-slate-400 text-sm">
-              Nothing waiting — you&apos;re all caught up. 🎉
-            </li>
-          )}
-        </ul>
-      </Card>
-
-      <Card>
-        <h2 className="font-bold mb-3">✅ Reviewed ({decided.length})</h2>
-        <ul className="divide-y">
-          {decided.map((l) => (
-            <LeaveItem key={l.id} leave={l} />
-          ))}
-          {decided.length === 0 && (
-            <li className="py-4 text-center text-slate-400 text-sm">
-              Nothing reviewed yet.
-            </li>
-          )}
-        </ul>
-      </Card>
-    </>
-  );
-}
-
-function LeaveItem({ leave }: { leave: LeaveRow }) {
-  const router = useRouter();
-  const [pending, start] = useTransition();
-  const [feedback, setFeedback] = useState(leave.feedback ?? "");
-  const [error, setError] = useState<string | null>(null);
-  // Reviewed requests show a clean read-only summary by default (like the
-  // student sees). "Edit decision" reopens the controls to change it.
-  const isReviewed = leave.status !== "pending";
-  const [editing, setEditing] = useState(false);
-
-  const statusMeta: Record<LeaveRow["status"], { label: string; chip: string }> = {
-    pending: { label: "pending", chip: "bg-amber-100 text-amber-700" },
-    approved: { label: "approved", chip: "bg-emerald-100 text-emerald-700" },
-    rejected: { label: "rejected", chip: "bg-rose-100 text-rose-700" },
-  };
-  const meta = statusMeta[leave.status];
-
-  function review(status: "approved" | "rejected" | "pending") {
-    setError(null);
-    const fd = new FormData();
-    fd.set("status", status);
-    fd.set("feedback", feedback);
-    start(async () => {
-      const res = await reviewLeaveRequest(leave.id, fd);
-      if (res.error) {
-        setError(res.error);
-        return;
-      }
-      setEditing(false);
-      router.refresh();
-    });
-  }
-
-  function onDelete() {
-    if (!confirm("Delete this leave request permanently?")) return;
-    setError(null);
-    start(async () => {
-      const res = await deleteLeaveRequest(leave.id);
-      if (res.error) {
-        setError(res.error);
-        return;
-      }
-      router.refresh();
-    });
-  }
-
-  return (
-    <li className="py-3">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="font-semibold">{leave.student_name}</p>
-          <p className="text-slate-400 text-xs break-all">
-            {leave.student_email || "no email on file"} · sent {fmt(leave.created_at)}
-          </p>
-          {leave.student_email && (
-            <div className="mt-1">
-              <EmailStudentButton
-                studentId={leave.student_id}
-                name={leave.student_name}
-                defaultSubject={`About your leave request${leave.lesson_title ? `: ${leave.lesson_title}` : ""}`}
-              />
-            </div>
-          )}
-        </div>
-        <span
-          className={`shrink-0 text-xs rounded-full px-2 py-0.5 font-medium ${meta.chip}`}
-        >
-          {meta.label}
-        </span>
-      </div>
-
-      <p className="mt-2 text-xs font-semibold text-brand-700">
-        {leave.lesson_title ? (
-          <>
-            {leave.lesson_title}
-            {leave.lesson_at && (
-              <span className="text-slate-400 font-normal"> · {fmt(leave.lesson_at)}</span>
-            )}
-          </>
-        ) : (
-          <span className="text-slate-400">General leave (no class linked)</span>
-        )}
-      </p>
-      <p className="mt-1 text-sm whitespace-pre-line">{leave.reason}</p>
-
-      {isReviewed && !editing ? (
-        <>
-          {/* Reviewed: clean read-only summary (mirrors the student's view). */}
-          {leave.feedback ? (
-            <div className="mt-2 rounded-lg bg-brand-50 border border-brand-100 px-3 py-2">
-              <p className="text-xs font-semibold text-brand-700">Your note</p>
-              <p className="text-sm whitespace-pre-line">{leave.feedback}</p>
-            </div>
-          ) : (
-            <p className="mt-2 text-xs text-slate-400 italic">No note left for the student.</p>
-          )}
-
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => setEditing(true)}
-              disabled={pending}
-              className="text-xs rounded-lg border border-slate-300 text-slate-600 px-3 py-1.5 disabled:opacity-50"
-            >
-              Edit decision
-            </button>
-            <button
-              onClick={onDelete}
-              disabled={pending}
-              className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1.5 disabled:opacity-50 ml-auto"
-            >
-              Delete
-            </button>
-          </div>
-        </>
-      ) : (
-        <>
-          <textarea
-            value={feedback}
-            onChange={(e) => setFeedback(e.target.value)}
-            rows={2}
-            placeholder="Feedback for the student (optional)"
-            className={fieldClass() + " mt-2"}
-          />
-
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => review("approved")}
-              disabled={pending}
-              className="text-xs rounded-lg bg-emerald-600 text-white px-3 py-1.5 font-semibold disabled:opacity-50"
-            >
-              Approve
-            </button>
-            <button
-              onClick={() => review("rejected")}
-              disabled={pending}
-              className="text-xs rounded-lg bg-rose-600 text-white px-3 py-1.5 font-semibold disabled:opacity-50"
-            >
-              Reject
-            </button>
-            <button
-              onClick={() => review("pending")}
-              disabled={pending}
-              className="text-xs rounded-lg border border-slate-300 text-slate-600 px-2 py-1.5 disabled:opacity-50"
-              title="Save the note without approving or rejecting yet"
-            >
-              Save note only
-            </button>
-            {isReviewed && (
-              <button
-                onClick={() => {
-                  setFeedback(leave.feedback ?? "");
-                  setEditing(false);
-                  setError(null);
-                }}
-                disabled={pending}
-                className="text-xs rounded-lg border border-slate-300 text-slate-600 px-2 py-1.5 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-            )}
-            <button
-              onClick={onDelete}
-              disabled={pending}
-              className="text-xs rounded-lg border border-rose-200 text-rose-700 px-2 py-1.5 disabled:opacity-50 ml-auto"
-            >
-              Delete
-            </button>
-          </div>
-        </>
       )}
       {error && <p className="text-rose-600 text-xs mt-1">{error}</p>}
     </li>

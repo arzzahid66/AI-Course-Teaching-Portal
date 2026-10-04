@@ -83,8 +83,25 @@ export function youtubeVideoId(raw: string | null | undefined): string | null {
   return id;
 }
 
-/** Alias kept for the class / Google Meet check-in link. @see normalizeUrl */
-export const normalizeMeetLink = normalizeUrl;
+/**
+ * What a weekend content item is. The first three are videos (play button,
+ * "watched" tick); the rest are links that just open. Only topic + hands_on
+ * count towards the progress score.
+ */
+export const CONTENT_KINDS = {
+  topic: { label: "Video 1 · Main topic", isVideo: true },
+  hands_on: { label: "Video 2 · Hands-on build", isVideo: true },
+  extra: { label: "Extra video", isVideo: true },
+  slides: { label: "Slides", isVideo: false },
+  code: { label: "Code", isVideo: false },
+  doc: { label: "Notes / link", isVideo: false },
+} as const;
+
+export type ContentKind = keyof typeof CONTENT_KINDS;
+
+export function isContentKind(v: string): v is ContentKind {
+  return Object.prototype.hasOwnProperty.call(CONTENT_KINDS, v);
+}
 
 /** One named link inside a Library resource (a recording or a slides file). */
 export type ResourceLink = { label: string; url: string };
@@ -116,14 +133,6 @@ export function parseResourceLinks(raw: string | null | undefined): ResourceLink
 export function serializeResourceLinks(links: ResourceLink[]): string {
   return links.map((l) => (l.label ? `${l.label} | ${l.url}` : l.url)).join("\n");
 }
-
-/**
- * Check-in stays open this many minutes AFTER the tutor opens the session
- * (i.e. measured from the session's created_at / class start), not from the
- * scheduled time. Latecomers past this are too late and must be let in by the
- * tutor manually.
- */
-export const CHECKIN_WINDOW_MIN = 30;
 
 // ---------------------------------------------------------------------------
 // Quiz (MCQ modules) defaults. Used to pre-fill the admin create-quiz form and
@@ -160,7 +169,7 @@ export const DEFAULT_MONTHS = 2;
 /** Default weekends (weekly classes) per intake. */
 export const DEFAULT_WEEKENDS = 8;
 
-/** Default days after a due date before an unpaid month blocks check-in. */
+/** Default days after a due date before an unpaid month locks the account. */
 export const DEFAULT_GRACE_DAYS = 7;
 
 /** Default class time (Pakistan time) for auto-scheduled classes. */

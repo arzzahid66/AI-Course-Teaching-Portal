@@ -1,5 +1,6 @@
 import "server-only";
 import { sql } from "@/lib/db";
+import type { ContentKind } from "@/lib/constants";
 
 // ---------------------------------------------------------------------------
 // Curriculum: course levels, weekends and their videos
@@ -11,7 +12,7 @@ export type VideoRow = {
   weekend_id: number;
   title: string;
   url: string;
-  kind: "topic" | "hands_on" | "extra";
+  kind: ContentKind;
   sort_order: number;
 };
 

@@ -47,7 +47,9 @@ CREATE TABLE weekend_videos (
   weekend_id int  NOT NULL REFERENCES weekends(id) ON DELETE CASCADE,
   title      text NOT NULL,
   url        text NOT NULL,
-  kind       text NOT NULL DEFAULT 'topic' CHECK (kind IN ('topic', 'hands_on', 'extra')),
+  kind       text NOT NULL DEFAULT 'topic'
+             CONSTRAINT weekend_videos_kind_check
+             CHECK (kind IN ('topic', 'hands_on', 'extra', 'slides', 'code', 'doc')),
   sort_order int  NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -57,6 +59,17 @@ CREATE TABLE video_progress (
   video_id   int NOT NULL REFERENCES weekend_videos(id) ON DELETE CASCADE,
   watched_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (student_id, video_id)
+);
+
+-- General videos every student can watch (not tied to a weekend or intake).
+CREATE TABLE library_videos (
+  id          serial PRIMARY KEY,
+  title       text NOT NULL,
+  url         text NOT NULL,
+  description text,
+  category    text,                     -- heading the portal groups by; empty = "General"
+  sort_order  int  NOT NULL DEFAULT 0,
+  created_at  timestamptz NOT NULL DEFAULT now()
 );
 
 -- ---------------------------------------------------------------------------
@@ -298,6 +311,7 @@ CREATE INDEX idx_sessions_is_open      ON sessions(is_open);
 CREATE INDEX idx_attendance_session    ON attendance(session_id);
 CREATE INDEX idx_attendance_student    ON attendance(student_id);
 CREATE INDEX idx_weekend_videos        ON weekend_videos(weekend_id, sort_order);
+CREATE INDEX idx_library_videos        ON library_videos(category, sort_order, id);
 CREATE INDEX idx_homework_weekend      ON homework_submissions(weekend_id);
 CREATE INDEX idx_homework_status       ON homework_submissions(status);
 CREATE INDEX idx_questions_student     ON questions(student_id);
@@ -321,7 +335,7 @@ INSERT INTO payment_accounts (method, account_title, account_number, instruction
 VALUES ('EasyPaisa', 'Abdul Rehman Zahid', '03487356993',
         'Write your full name in the transfer note, then send the screenshot on WhatsApp.', 0);
 
-INSERT INTO app_settings (key, value) VALUES ('tutor_whatsapp', '923487356003');
+INSERT INTO app_settings (key, value) VALUES ('tutor_whatsapp', '923487356993');
 
 -- ---------------------------------------------------------------------------
 -- Seed: course levels (from the 15-Sep-2026 course outline)

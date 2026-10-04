@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { BatchRow, ProgressRow } from "@/lib/course";
 import { BAND_META, BandBadge, Card, EmailStudentButton, EmptyRow, MiniBar, btn, downloadCsv } from "../ui";
 
-type SortKey = "score" | "name" | "attendance" | "homework" | "quiz" | "videos";
+type SortKey = "score" | "name" | "homework" | "quiz" | "videos";
 
 const pctText = (p: number | null) => (p == null ? "—" : `${p}%`);
 
@@ -30,17 +30,13 @@ export default function ProgressTab({ batch, rows }: { batch: BatchRow; rows: Pr
 
   function exportCsv() {
     downloadCsv(`progress-${batch.name.replace(/\W+/g, "-")}.csv`, [
-      ["Rank", "Student", "Email", "Score", "Band", "Attendance %", "Present", "Absent", "Excused", "Homework %", "Homework missing", "Quiz %", "Videos watched", "Videos released"],
+      ["Rank", "Student", "Email", "Score", "Band", "Homework %", "Homework missing", "Quiz %", "Videos watched", "Videos released"],
       ...sorted.map((r, i) => [
         i + 1,
         r.name,
         r.email,
         r.score,
         BAND_META[r.band].label,
-        r.attendance.pct,
-        r.attendance.present,
-        r.attendance.absent,
-        r.attendance.excused,
         r.homework.pct,
         r.homework.missing,
         r.quiz.pct,
@@ -66,8 +62,7 @@ export default function ProgressTab({ batch, rows }: { batch: BatchRow; rows: Pr
           <div>
             <h2 className="font-bold">Progress — {batch.name}</h2>
             <p className="text-sm text-slate-500">
-              Class average <b className="tabular-nums">{average ?? "—"}</b> · weights: attendance {batch.w_attendance}, homework{" "}
-              {batch.w_homework}, quiz {batch.w_quiz}, videos {batch.w_videos}
+              Class average <b className="tabular-nums">{average ?? "—"}</b> · weights: homework {batch.w_homework}, quiz {batch.w_quiz}, videos {batch.w_videos}
             </p>
           </div>
           <button onClick={exportCsv} disabled={rows.length === 0} className={btn.small}>
@@ -84,7 +79,7 @@ export default function ProgressTab({ batch, rows }: { batch: BatchRow; rows: Pr
           )}
         </div>
         <p className="text-xs text-slate-400 mt-2">
-          Only work that is already due counts. Missed classes, missing homework and unattempted quizzes lower the score.
+          Only work that is already due counts. Missing homework, unattempted quizzes and unwatched videos lower the score.
         </p>
       </Card>
 
@@ -96,7 +91,6 @@ export default function ProgressTab({ batch, rows }: { batch: BatchRow; rows: Pr
                 <th className="py-2 px-2">#</th>
                 {header("name", "Student")}
                 {header("score", "Score")}
-                {header("attendance", "Attend.", "hidden sm:table-cell")}
                 {header("homework", "Homework", "hidden sm:table-cell")}
                 {header("quiz", "Quiz", "hidden sm:table-cell")}
                 {header("videos", "Videos", "hidden sm:table-cell")}
@@ -106,7 +100,7 @@ export default function ProgressTab({ batch, rows }: { batch: BatchRow; rows: Pr
               {sorted.map((r, i) => (
                 <FragmentRow key={r.enrollment_id} rank={i + 1} row={r} open={open === r.enrollment_id} onToggle={() => setOpen(open === r.enrollment_id ? null : r.enrollment_id)} />
               ))}
-              {rows.length === 0 && <EmptyRow colSpan={7}>No students enrolled in this intake.</EmptyRow>}
+              {rows.length === 0 && <EmptyRow colSpan={6}>No students enrolled in this intake.</EmptyRow>}
             </tbody>
           </table>
         </div>
@@ -130,31 +124,19 @@ function FragmentRow({
     <>
       <tr className="border-b last:border-0 cursor-pointer hover:bg-slate-50" onClick={onToggle}>
         <td className="py-2 px-2 text-slate-400 tabular-nums">{rank}</td>
-        <td className="py-2 px-2 font-medium">
-          {r.name}
-          {r.attendance.absent > 0 && (
-            <span className="text-xs text-rose-600 font-normal"> · {r.attendance.absent} absent</span>
-          )}
-        </td>
+        <td className="py-2 px-2 font-medium">{r.name}</td>
         <td className="py-2 px-2">
           <span className="font-bold tabular-nums mr-1.5">{r.score ?? "—"}</span>
           <BandBadge band={r.band} />
         </td>
-        <td className="py-2 px-2 hidden sm:table-cell tabular-nums">{pctText(r.attendance.pct)}</td>
         <td className="py-2 px-2 hidden sm:table-cell tabular-nums">{pctText(r.homework.pct)}</td>
         <td className="py-2 px-2 hidden sm:table-cell tabular-nums">{pctText(r.quiz.pct)}</td>
         <td className="py-2 px-2 hidden sm:table-cell tabular-nums">{pctText(r.videos.pct)}</td>
       </tr>
       {open && (
         <tr className="bg-slate-50">
-          <td colSpan={7} className="px-3 py-3">
+          <td colSpan={6} className="px-3 py-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-              <Part
-                label="Attendance"
-                pct={r.attendance.pct}
-                weight={r.attendance.weight}
-                detail={`${r.attendance.present} present of ${r.attendance.held} held · ${r.attendance.absent} absent · ${r.attendance.excused} excused`}
-              />
               <Part
                 label="Homework"
                 pct={r.homework.pct}

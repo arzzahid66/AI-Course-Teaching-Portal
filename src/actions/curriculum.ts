@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { sql } from "@/lib/db";
 import { assertAdmin } from "@/lib/auth";
 import { iso, isoOrNull } from "@/lib/course";
-import { normalizeUrl } from "@/lib/constants";
+import { CONTENT_KINDS, isContentKind, normalizeUrl } from "@/lib/constants";
 import { notifyStudent } from "@/lib/pushNotifications";
 import { queueBroadcastEmail, queueStudentEmail } from "@/lib/email";
 import { loadCurriculum, type Curriculum } from "@/lib/curriculum";
@@ -77,7 +77,7 @@ function readVideoForm(formData: FormData) {
   return {
     title: String(formData.get("title") ?? "").trim(),
     url: normalizeUrl(String(formData.get("url") ?? "")),
-    kind: kind === "hands_on" || kind === "extra" ? kind : "topic",
+    kind: isContentKind(kind) ? kind : "topic",
     sortOrder: Number(formData.get("sort_order") || 0) || 0,
   };
 }
@@ -85,7 +85,7 @@ function readVideoForm(formData: FormData) {
 export async function addVideo(weekendId: number, formData: FormData): Promise<{ error?: string }> {
   await assertAdmin();
   const v = readVideoForm(formData);
-  if (!v.title || !v.url) return { error: "Video title and link are required." };
+  if (!v.title || !v.url) return { error: "Title and link are required." };
   await sql`
     INSERT INTO weekend_videos (weekend_id, title, url, kind, sort_order)
     VALUES (${weekendId}, ${v.title}, ${v.url}, ${v.kind}, ${v.sortOrder})
@@ -97,12 +97,19 @@ export async function addVideo(weekendId: number, formData: FormData): Promise<{
     if (w[0]) {
       queueBroadcastEmail(
         { level: w[0].level },
-        {
-          subject: `New video: ${v.title}`,
-          heading: "A new video is up",
-          lines: [`"${v.title}" was added to Weekend ${w[0].weekend_no} — ${w[0].title}.`],
-          link: { label: "Watch the video", url: v.url },
-        }
+        CONTENT_KINDS[v.kind].isVideo
+          ? {
+              subject: `New video: ${v.title}`,
+              heading: "A new video is up",
+              lines: [`"${v.title}" was added to Weekend ${w[0].weekend_no} — ${w[0].title}.`],
+              link: { label: "Watch the video", url: v.url },
+            }
+          : {
+              subject: `New ${CONTENT_KINDS[v.kind].label.toLowerCase()}: ${v.title}`,
+              heading: `New ${CONTENT_KINDS[v.kind].label.toLowerCase()} for Weekend ${w[0].weekend_no}`,
+              lines: [`"${v.title}" was added to Weekend ${w[0].weekend_no} — ${w[0].title}.`],
+              link: { label: "Open it", url: v.url },
+            }
       );
     }
   }
@@ -114,7 +121,7 @@ export async function addVideo(weekendId: number, formData: FormData): Promise<{
 export async function updateVideo(id: number, formData: FormData): Promise<{ error?: string }> {
   await assertAdmin();
   const v = readVideoForm(formData);
-  if (!v.title || !v.url) return { error: "Video title and link are required." };
+  if (!v.title || !v.url) return { error: "Title and link are required." };
   await sql`
     UPDATE weekend_videos
     SET title = ${v.title}, url = ${v.url}, kind = ${v.kind}, sort_order = ${v.sortOrder}

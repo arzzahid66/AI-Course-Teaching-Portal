@@ -11,7 +11,6 @@ import {
   generateStudentToken,
   hashPassword,
 } from "@/lib/auth";
-import { normalizeMeetLink } from "@/lib/constants";
 import {
   createInvoicesForEnrollment,
   insertPayment,
@@ -27,12 +26,7 @@ import {
 } from "@/lib/course";
 import { recordLoginLog } from "@/lib/loginLog";
 import { notifyStudent } from "@/lib/pushNotifications";
-import {
-  fmtClassTime,
-  queueBroadcastEmail,
-  queueStudentEmail,
-  sendStudentEmailNow,
-} from "@/lib/email";
+import { queueStudentEmail, sendStudentEmailNow } from "@/lib/email";
 import { queueWelcomeEmail, sendWelcomeEmailNow } from "@/lib/welcomeEmail";
 import { queuePaymentReceiptEmail } from "@/lib/receiptEmail";
 
@@ -329,7 +323,7 @@ export async function updateStudent(
   return {};
 }
 
-/** Permanently delete a student. Enrollments, fees, payments, attendance cascade. */
+/** Permanently delete a student. Enrollments, fees, payments and their other records cascade. */
 export async function deleteStudent(studentId: number): Promise<{ error?: string }> {
   await assertAdmin();
   try {
@@ -399,7 +393,6 @@ export type StudentDetail = {
     payments: PaymentRow[];
     progress: ProgressRow | null;
   })[];
-  attendance: { title: string; scheduled_at: string; status: string; batch_name: string }[];
   homework: {
     weekend_no: number;
     title: string;
@@ -458,15 +451,6 @@ export async function getStudentDetail(studentId: number): Promise<StudentDetail
     })
   );
 
-  const attendance = (await sql`
-    SELECT s.title, s.scheduled_at, a.status, b.name AS batch_name
-    FROM attendance a
-    JOIN sessions s ON s.id = a.session_id
-    JOIN batches b ON b.id = s.batch_id
-    WHERE a.student_id = ${studentId}
-    ORDER BY s.scheduled_at DESC LIMIT 50
-  `) as { title: string; scheduled_at: Date; status: string; batch_name: string }[];
-
   const homework = (await sql`
     SELECT w.weekend_no, w.title, h.status, h.marks, h.link_url, b.name AS batch_name
     FROM homework_submissions h
@@ -484,278 +468,8 @@ export async function getStudentDetail(studentId: number): Promise<StudentDetail
     email: row?.email ?? null,
     password: row?.password_plain ?? null,
     enrollments: detailed,
-    attendance: attendance.map((a) => ({ ...a, scheduled_at: iso(a.scheduled_at) })),
     homework,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Sessions (classes) — every class belongs to an intake
-// ---------------------------------------------------------------------------
-export type SessionRow = {
-  id: number;
-  batch_id: number;
-  batch_name: string;
-  weekend_id: number | null;
-  weekend_no: number | null;
-  title: string;
-  scheduled_at: string;
-  meet_link: string;
-  code: string;
-  is_open: boolean;
-  closed_at: string | null;
-  present: number;
-  absent: number;
-  excused: number;
-};
-
-export type AttendeeRow = {
-  student_id: number;
-  name: string;
-  email: string | null;
-  status: "present" | "absent" | "excused" | null;
-};
-
-type SessionSqlRow = Omit<SessionRow, "scheduled_at" | "closed_at" | "present" | "absent" | "excused"> & {
-  scheduled_at: Date;
-  closed_at: Date | null;
-  present: string;
-  absent: string;
-  excused: string;
-};
-
-function toSessionRow(r: SessionSqlRow): SessionRow {
-  return {
-    ...r,
-    scheduled_at: iso(r.scheduled_at),
-    closed_at: isoOrNull(r.closed_at),
-    present: Number(r.present),
-    absent: Number(r.absent),
-    excused: Number(r.excused),
-  };
-}
-
-export async function getOpenSessionWithAttendance(): Promise<{
-  session: SessionRow | null;
-  attendees: AttendeeRow[];
-}> {
-  await assertAdmin();
-  const sessions = (await sql`
-    SELECT s.id, s.batch_id, b.name AS batch_name, s.weekend_id, w.weekend_no, s.title,
-      s.scheduled_at, s.meet_link, s.code, s.is_open, s.closed_at,
-      0 AS present, 0 AS absent, 0 AS excused
-    FROM sessions s
-    JOIN batches b ON b.id = s.batch_id
-    LEFT JOIN weekends w ON w.id = s.weekend_id
-    WHERE s.is_open = true
-    ORDER BY s.created_at DESC LIMIT 1
-  `) as SessionSqlRow[];
-  const session = sessions[0] ? toSessionRow(sessions[0]) : null;
-  if (!session) return { session: null, attendees: [] };
-  return { session, attendees: await getSessionAttendees(session.id) };
-}
-
-/** Everyone actively enrolled in the session's intake, with their status for it. */
-export async function getSessionAttendees(sessionId: number): Promise<AttendeeRow[]> {
-  await assertAdmin();
-  return (await sql`
-    SELECT st.id AS student_id, st.name, st.email, a.status
-    FROM sessions s
-    JOIN enrollments e ON e.batch_id = s.batch_id AND e.status = 'active'
-    JOIN students st ON st.id = e.student_id
-    LEFT JOIN attendance a ON a.session_id = s.id AND a.student_id = st.id
-    WHERE s.id = ${sessionId}
-    ORDER BY (a.status = 'present') DESC NULLS LAST, st.name ASC
-  `) as AttendeeRow[];
-}
-
-export async function getBatchSessions(batchId: number): Promise<SessionRow[]> {
-  await assertAdmin();
-  const rows = (await sql`
-    SELECT s.id, s.batch_id, b.name AS batch_name, s.weekend_id, w.weekend_no, s.title,
-      s.scheduled_at, s.meet_link, s.code, s.is_open, s.closed_at,
-      COUNT(a.id) FILTER (WHERE a.status = 'present') AS present,
-      COUNT(a.id) FILTER (WHERE a.status = 'absent') AS absent,
-      COUNT(a.id) FILTER (WHERE a.status = 'excused') AS excused
-    FROM sessions s
-    JOIN batches b ON b.id = s.batch_id
-    LEFT JOIN weekends w ON w.id = s.weekend_id
-    LEFT JOIN attendance a ON a.session_id = s.id
-    WHERE s.batch_id = ${batchId}
-    GROUP BY s.id, b.name, w.weekend_no
-    ORDER BY s.scheduled_at ASC
-  `) as SessionSqlRow[];
-  return rows.map(toSessionRow);
-}
-
-function readSessionForm(formData: FormData) {
-  return {
-    batchId: Number(formData.get("batch_id")),
-    title: String(formData.get("title") ?? "").trim(),
-    scheduledAt: String(formData.get("scheduled_at") ?? "").trim(),
-    meetLink: normalizeMeetLink(String(formData.get("meet_link") ?? "")),
-    code: String(formData.get("code") ?? "").trim(),
-  };
-}
-
-/**
- * Email the intake that a class is starting now (Meet link) or has been
- * scheduled. The spoken check-in code is never included — it proves presence.
- */
-function emailClass(
-  kind: "started" | "scheduled",
-  s: { batch_id: number; title: string; scheduled_at: Date | string; meet_link: string }
-) {
-  const when = fmtClassTime(s.scheduled_at);
-  const link = s.meet_link.trim() ? { label: "Join the class", url: s.meet_link } : undefined;
-  queueBroadcastEmail(
-    { batchId: s.batch_id },
-    kind === "started"
-      ? {
-          subject: `Class is starting now: ${s.title}`,
-          heading: "Your class is live",
-          lines: [`"${s.title}" has started. Join now and check in from the portal.`],
-          link,
-        }
-      : {
-          subject: `Class scheduled: ${s.title} — ${when}`,
-          heading: "A class has been scheduled",
-          lines: [`"${s.title}" is scheduled for ${when} (Pakistan time).`, "The Meet link will be on the portal when the class starts."],
-        }
-  );
-}
-
-/** Start a brand-new (extra) class right now for an intake. */
-export async function createSession(formData: FormData): Promise<{ error?: string }> {
-  await assertAdmin();
-  const f = readSessionForm(formData);
-  if (!f.batchId) return { error: "Pick an intake first." };
-  if (!f.title || !f.scheduledAt || !f.meetLink || !f.code) {
-    return { error: "Title, time, Meet link and code are all required." };
-  }
-  await sql`UPDATE sessions SET is_open = false, closed_at = now() WHERE is_open = true`;
-  await sql`
-    INSERT INTO sessions (batch_id, title, scheduled_at, meet_link, code, is_open)
-    VALUES (${f.batchId}, ${f.title}, ${f.scheduledAt}, ${f.meetLink}, ${f.code}, true)
-  `;
-  emailClass("started", { batch_id: f.batchId, title: f.title, scheduled_at: f.scheduledAt, meet_link: f.meetLink });
-  revalidatePath("/admin");
-  return {};
-}
-
-/** Schedule an extra class without opening it. Meet link + code can come later. */
-export async function scheduleSession(formData: FormData): Promise<{ error?: string }> {
-  await assertAdmin();
-  const f = readSessionForm(formData);
-  if (!f.batchId) return { error: "Pick an intake first." };
-  if (!f.title || !f.scheduledAt) return { error: "Title and time are required." };
-  await sql`
-    INSERT INTO sessions (batch_id, title, scheduled_at, meet_link, code, is_open)
-    VALUES (${f.batchId}, ${f.title}, ${f.scheduledAt}, ${f.meetLink}, ${f.code}, false)
-  `;
-  emailClass("scheduled", { batch_id: f.batchId, title: f.title, scheduled_at: f.scheduledAt, meet_link: f.meetLink });
-  revalidatePath("/admin");
-  return {};
-}
-
-/**
- * Close the open session. Every actively enrolled student of its intake with no
- * attendance row is marked absent. No fine — absences only lower the progress score.
- */
-export async function closeSession(sessionId: number): Promise<{ error?: string }> {
-  await assertAdmin();
-  const open = (await sql`
-    SELECT id FROM sessions WHERE id = ${sessionId} AND is_open = true LIMIT 1
-  `) as { id: number }[];
-  if (!open[0]) return { error: "Session is not open." };
-
-  await sql`
-    INSERT INTO attendance (student_id, session_id, status)
-    SELECT e.student_id, s.id, 'absent'
-    FROM sessions s
-    JOIN enrollments e ON e.batch_id = s.batch_id AND e.status = 'active'
-    WHERE s.id = ${sessionId}
-    ON CONFLICT (student_id, session_id) DO NOTHING
-  `;
-  await sql`UPDATE sessions SET is_open = false, closed_at = now() WHERE id = ${sessionId}`;
-  revalidatePath("/admin");
-  return {};
-}
-
-/**
- * Start a scheduled session so students can check in. It needs a Meet link and
- * code first. Closes any other open session and restarts the check-in window.
- */
-export async function openSession(sessionId: number): Promise<{ error?: string }> {
-  await assertAdmin();
-  const rows = (await sql`
-    SELECT batch_id, title, scheduled_at, meet_link, code FROM sessions WHERE id = ${sessionId}
-  `) as { batch_id: number; title: string; scheduled_at: Date; meet_link: string; code: string }[];
-  if (!rows[0]) return { error: "Class not found." };
-  if (!rows[0].meet_link.trim() || !rows[0].code.trim()) {
-    return { error: "Add the Meet link and today's code (Edit) before starting this class." };
-  }
-  await sql`UPDATE sessions SET is_open = false, closed_at = now() WHERE is_open = true`;
-  await sql`
-    UPDATE sessions SET is_open = true, closed_at = NULL, created_at = now()
-    WHERE id = ${sessionId}
-  `;
-  emailClass("started", rows[0]);
-  revalidatePath("/admin");
-  return {};
-}
-
-/** Edit a session's details (title, time, meet link, code). */
-export async function updateSession(
-  sessionId: number,
-  formData: FormData
-): Promise<{ error?: string }> {
-  await assertAdmin();
-  const f = readSessionForm(formData);
-  if (!f.title || !f.scheduledAt) return { error: "Title and time are required." };
-  try {
-    await sql`
-      UPDATE sessions
-      SET title = ${f.title}, scheduled_at = ${f.scheduledAt}, meet_link = ${f.meetLink}, code = ${f.code}
-      WHERE id = ${sessionId}
-    `;
-  } catch (e) {
-    return { error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save session." };
-  }
-  revalidatePath("/admin");
-  return {};
-}
-
-/** Delete a session; its attendance rows cascade. */
-export async function deleteSession(sessionId: number): Promise<{ error?: string }> {
-  await assertAdmin();
-  try {
-    await sql`DELETE FROM sessions WHERE id = ${sessionId}`;
-  } catch (e) {
-    return { error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete session." };
-  }
-  revalidatePath("/admin");
-  return {};
-}
-
-/** Manually set (or clear) one student's attendance for a class. */
-export async function setAttendance(
-  sessionId: number,
-  studentId: number,
-  status: "present" | "absent" | "excused" | "none"
-): Promise<{ error?: string }> {
-  await assertAdmin();
-  if (status === "none") {
-    await sql`DELETE FROM attendance WHERE session_id = ${sessionId} AND student_id = ${studentId}`;
-  } else {
-    await sql`
-      INSERT INTO attendance (student_id, session_id, status)
-      VALUES (${studentId}, ${sessionId}, ${status})
-      ON CONFLICT (student_id, session_id) DO UPDATE SET status = ${status}
-    `;
-  }
-  revalidatePath("/admin");
-  return {};
 }
 
 // ---------------------------------------------------------------------------
@@ -880,139 +594,6 @@ export async function deleteQuestion(id: number): Promise<{ error?: string }> {
     await sql`DELETE FROM questions WHERE id = ${id}`;
   } catch (e) {
     return { error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete question." };
-  }
-  revalidatePath("/admin");
-  return {};
-}
-
-// ---------------------------------------------------------------------------
-// Leave requests (students ask for leave from a class; approved = excused)
-// ---------------------------------------------------------------------------
-export type LeaveRow = {
-  id: number;
-  student_id: number;
-  student_name: string;
-  student_email: string | null;
-  lesson_title: string | null;
-  lesson_at: string | null;
-  reason: string;
-  status: "pending" | "approved" | "rejected";
-  feedback: string | null;
-  created_at: string;
-  reviewed_at: string | null;
-};
-
-export async function getLeaveRequests(): Promise<LeaveRow[]> {
-  await assertAdmin();
-  const rows = (await sql`
-    SELECT
-      l.id, l.student_id,
-      s.name  AS student_name,
-      s.email AS student_email,
-      l.lesson_title, l.lesson_at, l.reason, l.status, l.feedback,
-      l.created_at, l.reviewed_at
-    FROM leave_requests l
-    JOIN students s ON s.id = l.student_id
-    ORDER BY (l.status = 'pending') DESC, l.created_at DESC
-  `) as (Omit<LeaveRow, "lesson_at" | "created_at" | "reviewed_at"> & {
-    lesson_at: Date | null;
-    created_at: Date;
-    reviewed_at: Date | null;
-  })[];
-  return rows.map((r) => ({
-    ...r,
-    lesson_at: isoOrNull(r.lesson_at),
-    created_at: iso(r.created_at),
-    reviewed_at: isoOrNull(r.reviewed_at),
-  }));
-}
-
-/**
- * Approve / reject a leave request (or keep it pending with feedback). An
- * approved leave marks the student "excused" for that class so it does not
- * count against their attendance; undoing the approval removes the excuse.
- */
-export async function reviewLeaveRequest(
-  id: number,
-  formData: FormData
-): Promise<{ error?: string }> {
-  await assertAdmin();
-  const status = String(formData.get("status") ?? "").trim();
-  const feedback = String(formData.get("feedback") ?? "").trim();
-
-  if (status !== "approved" && status !== "rejected" && status !== "pending") {
-    return { error: "Pick approve or reject." };
-  }
-
-  try {
-    const rows = (await sql`
-      UPDATE leave_requests
-      SET status = ${status},
-          feedback = ${feedback || null},
-          reviewed_at = CASE WHEN ${status} = 'pending' THEN NULL ELSE now() END
-      WHERE id = ${id}
-      RETURNING student_id, session_id, lesson_title
-    `) as { student_id: number; session_id: number | null; lesson_title: string | null }[];
-
-    const l = rows[0];
-    if (l?.session_id) {
-      if (status === "approved") {
-        await sql`
-          INSERT INTO attendance (student_id, session_id, status)
-          VALUES (${l.student_id}, ${l.session_id}, 'excused')
-          ON CONFLICT (student_id, session_id)
-          DO UPDATE SET status = 'excused' WHERE attendance.status <> 'present'
-        `;
-      } else {
-        // Undo an earlier excuse: back to absent if the class already happened.
-        await sql`
-          UPDATE attendance a SET status = 'absent'
-          FROM sessions s
-          WHERE a.session_id = s.id AND s.id = ${l.session_id}
-            AND a.student_id = ${l.student_id} AND a.status = 'excused'
-            AND s.closed_at IS NOT NULL
-        `;
-        await sql`
-          DELETE FROM attendance
-          WHERE session_id = ${l.session_id} AND student_id = ${l.student_id} AND status = 'excused'
-        `;
-      }
-    }
-
-    if (l?.student_id && status !== "pending") {
-      const lesson = l.lesson_title ? ` for ${l.lesson_title}` : "";
-      notifyStudent(l.student_id, {
-        title: status === "approved" ? "Leave approved ✅" : "Leave rejected ❌",
-        body:
-          `Your leave request${lesson} was ${status}.` +
-          (feedback ? ` Note: ${feedback.slice(0, 80)}` : ""),
-        url: "/portal",
-      }).catch(() => {});
-      queueStudentEmail(l.student_id, {
-        subject: `Leave ${status}${l.lesson_title ? `: ${l.lesson_title}` : ""}`,
-        heading: status === "approved" ? "Your leave was approved" : "Your leave request was not approved",
-        lines: [
-          `Your leave request${lesson} was ${status}.` +
-            (status === "approved" ? " You are marked excused for that class." : ""),
-          feedback ? `Note from your tutor:\n${feedback}` : null,
-        ],
-      });
-    }
-  } catch (e) {
-    return { error: e instanceof Error ? `Could not save: ${e.message}` : "Could not save review." };
-  }
-  revalidatePath("/admin");
-  return {};
-}
-
-export async function deleteLeaveRequest(id: number): Promise<{ error?: string }> {
-  await assertAdmin();
-  try {
-    await sql`DELETE FROM leave_requests WHERE id = ${id}`;
-  } catch (e) {
-    return {
-      error: e instanceof Error ? `Could not delete: ${e.message}` : "Could not delete leave request.",
-    };
   }
   revalidatePath("/admin");
   return {};

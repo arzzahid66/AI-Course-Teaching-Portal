@@ -30,13 +30,7 @@ function day(ymd: string): string {
   });
 }
 
-/** "14:00" → "2:00 pm". */
-function clock(hhmm: string): string {
-  const [h, m] = hhmm.split(":").map(Number);
-  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "am" : "pm"}`;
-}
-
-/** "923487356003" → "+92 348 7356003". */
+/** "923487356993" → "+92 348 7356993". */
 function phone(digits: string): string {
   const d = digits.replace(/\D/g, "");
   return d.startsWith("92") && d.length === 12 ? `+92 ${d.slice(2, 5)} ${d.slice(5)}` : `+${d}`;
@@ -105,8 +99,8 @@ export async function buildWelcomeEmail(studentId: number): Promise<{ msg: Email
     );
     lines.push(
       batch.start_date >= today
-        ? `Classes start on ${day(batch.start_date)} at ${clock(batch.class_time)} (Pakistan time). Your class schedule, videos, homework and quizzes are all on the student portal.`
-        : `Classes are at ${clock(batch.class_time)} (Pakistan time). Your class schedule, videos, homework and quizzes are all on the student portal.`
+        ? `The course starts on ${day(batch.start_date)}. Your weekly videos, quizzes, homework and progress are all on the student portal.`
+        : "Your weekly videos, quizzes, homework and progress are all on the student portal."
     );
 
     sections.push({ title: "Your login", lines: loginLines });

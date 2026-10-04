@@ -8,9 +8,9 @@ export default function HomePage() {
       <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600 mb-1">ClassGate</p>
       <h1 className="text-3xl font-bold mb-2">AI Engineering Course</h1>
       <p className="text-slate-600 max-w-sm mb-8">
-        Live class every Sunday at 10:00 AM, two recorded videos every week, and
-        homework that builds real projects. Log in to check in, watch this
-        week&apos;s videos, submit homework, and see your progress and fees.
+        Two recorded videos every week, quizzes, and homework that builds real
+        projects. Log in to watch this week&apos;s videos, take quizzes, submit
+        homework, and see your progress and fees.
       </p>
 
       <div className="flex flex-col gap-3 w-full max-w-xs">

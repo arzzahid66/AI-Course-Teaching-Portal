@@ -26,7 +26,7 @@ This file is the plan and progress tracker for the revamp. Update it as tasks ar
 4. **Payment accounts are dynamic.**
    - EasyPaisa, JazzCash and bank details live in the DB and the admin edits them. The WhatsApp number for payment screenshots is also a DB setting.
    - Every student always sees them in the Fees tab.
-   - They are seeded with the current values (EasyPaisa 03487356993, WhatsApp 923487356003).
+   - They are seeded with the current values (EasyPaisa 03487356993, WhatsApp 923487356993).
 5. **Extras this round:** weekly videos (marked watched) and homework (a link, marked out of 10 with feedback).
 6. **Not this round:** public apply page, portfolio/projects, certificates, automatic reminders, removing `password_plain`.
 
@@ -92,7 +92,7 @@ This file is the plan and progress tracker for the revamp. Update it as tasks ar
 - 2026-09-16: tasks 11–13 done. `npm run build` clean. E2E test (Playwright, temp admin password on port 3100) passed all 7 verification checks: 8 Sunday classes Sep 20–Nov 8; full payment → both months paid on one receipt; overdue month blocks check-in and payment unblocks; wrong code rejected, right code reveals Meet link; close → absent with no fine; approved leave → excused; videos + homework 7/10 → progress B 86 (Excellent) / A 0 (At risk), matching hand calculation; payment account edit shows in portal; payments CSV correct. Fixed during testing: "This week" card showed a not-yet-open weekend; fees copy duplicated when one month left; admin page computed progress twice. Test data wiped with reset script (DB is clean: 16 weekends, 2 levels, 1 payment account). README rewritten.
 
 ## Before launch (for the tutor)
-- Fix the EasyPaisa / WhatsApp numbers in Admin → Fees → Payment accounts if one is wrong (seeded: 03487356993 / 923487356003).
+- Fix the EasyPaisa / WhatsApp numbers in Admin → Fees → Payment accounts if one is wrong (seeded: 03487356993 / 923487356993).
 - Create the intake "Batch 1 — Sep 2026" starting 2026-09-20, add Weekend 1 videos, add students, set each class's Meet link + code.
 - Run `migration.sql`-based reset only on purpose — it deletes everything.
 - 2026-09-16: removed the old "How to use this portal" and "How to submit homework" YouTube cards from the student Class tab (and their PORTAL_DEMO_YOUTUBE_ID / ASSIGNMENT_GUIDE_YOUTUBE_ID constants) — old-course videos.

@@ -1,16 +1,14 @@
 import { isAdmin } from "@/lib/auth";
 import {
   getStudents,
-  getOpenSessionWithAttendance,
-  getBatchSessions,
   getQuestions,
-  getLeaveRequests,
   getLoginLogs,
 } from "@/actions/admin";
 import { getBatches, getBatchOverview } from "@/actions/batches";
 import { getFeeBoard, getPaymentSettings, getPrivacyMode } from "@/actions/fees";
 import { getResourceBoard } from "@/actions/resources";
 import { getCurriculumAdmin, getHomeworkBoard } from "@/actions/curriculum";
+import { getLibraryAdmin } from "@/actions/library";
 import {
   getQuizzesAdmin,
   getQuizReattemptRequests,
@@ -38,13 +36,12 @@ async function settle<T>(promise: Promise<T>, fallback: T): Promise<T> {
 async function loadBatchData(batchId: number, batches: Awaited<ReturnType<typeof getBatches>>): Promise<BatchData | null> {
   const batch = batches.find((b) => b.id === batchId);
   if (!batch) return null;
-  const [{ stats, progress }, sessions, feeBoard, homework] = await Promise.all([
+  const [{ stats, progress }, feeBoard, homework] = await Promise.all([
     getBatchOverview(batchId),
-    settle(getBatchSessions(batchId), []),
     settle(getFeeBoard(batchId), { rows: [], payments: [], paymentRows: [] }),
     settle(getHomeworkBoard(batchId), { submissions: [], missing: [] }),
   ]);
-  return { batch, stats, sessions, feeBoard, homework, progress };
+  return { batch, stats, feeBoard, homework, progress };
 }
 
 export default async function AdminPage({
@@ -68,11 +65,9 @@ export default async function AdminPage({
   const [
     batchData,
     students,
-    openSession,
     curriculum,
     paymentSettings,
     questions,
-    leaves,
     quizzes,
     quizRequests,
     quizScoreboard,
@@ -80,14 +75,13 @@ export default async function AdminPage({
     loginLogs,
     resourceBoard,
     privacy,
+    library,
   ] = await Promise.all([
     selected ? settle(loadBatchData(selected.id, batches), null) : Promise.resolve(null),
     settle(getStudents(), []),
-    settle(getOpenSessionWithAttendance(), { session: null, attendees: [] }),
     settle(getCurriculumAdmin(), { levels: [], weekends: [] }),
     settle(getPaymentSettings(), { accounts: [], whatsapp: "" }),
     settle(getQuestions(), []),
-    settle(getLeaveRequests(), []),
     settle(getQuizzesAdmin(), []),
     settle(getQuizReattemptRequests(), []),
     settle(getQuizScoreboard(), { quizzes: [], students: [], scores: {} }),
@@ -95,6 +89,7 @@ export default async function AdminPage({
     settle(getLoginLogs(), []),
     settle(getResourceBoard(), { resources: [], requests: [], codeRequests: [], helpVideo: null }),
     settle(getPrivacyMode(), false),
+    settle(getLibraryAdmin(), []),
   ]);
 
   return (
@@ -102,13 +97,10 @@ export default async function AdminPage({
       batches={batches}
       batchData={batchData}
       students={students}
-      openSession={openSession.session}
-      attendees={openSession.attendees}
       curriculum={curriculum}
       paymentAccounts={paymentSettings.accounts}
       whatsapp={paymentSettings.whatsapp}
       questions={questions}
-      leaves={leaves}
       quizzes={quizzes}
       quizRequests={quizRequests}
       quizScoreboard={quizScoreboard}
@@ -116,6 +108,7 @@ export default async function AdminPage({
       loginLogs={loginLogs}
       resourceBoard={resourceBoard}
       privacy={privacy}
+      library={library}
     />
   );
 }
