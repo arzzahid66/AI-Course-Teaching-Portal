@@ -8,7 +8,7 @@ import {
   type PortalData,
   type PortalWeekend,
 } from "@/actions/student";
-import type { LibraryVideo } from "@/actions/library";
+import type { LibraryData, LibraryVideo } from "@/actions/library";
 import {
   CONTENT_KINDS,
   FEE_BANNER_DISMISS_PREFIX,
@@ -594,58 +594,119 @@ function LinkRow({ item }: { item: PortalWeekend["videos"][number] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Library — general videos for every student, grouped by category
+// Library — topic playlists (closed until opened) + general videos
 // ---------------------------------------------------------------------------
-export function LibraryTab({ videos }: { videos: LibraryVideo[] }) {
-  if (videos.length === 0) {
+export function LibraryTab({ library }: { library: LibraryData }) {
+  const { videos } = library;
+  // A playlist with nothing in it yet has nothing to show a student.
+  const playlists = library.playlists
+    .map((p) => ({ ...p, videos: videos.filter((v) => v.playlist_id === p.id) }))
+    .filter((p) => p.videos.length > 0);
+  const general = videos.filter((v) => v.playlist_id == null);
+
+  if (playlists.length === 0 && general.length === 0) {
     return (
       <Card>
         <div className="text-center py-4">
           <div className="text-4xl mb-2">📚</div>
           <h2 className="text-lg font-bold mb-1">The Library is empty</h2>
           <p className="text-slate-500 text-sm">
-            Your tutor hasn&apos;t added any general videos yet. Check back soon.
+            Your tutor hasn&apos;t added any extra videos yet. Check back soon.
           </p>
         </div>
       </Card>
     );
-  }
-  const groups = new Map<string, LibraryVideo[]>();
-  for (const v of videos) {
-    const key = v.category?.trim() || "General";
-    groups.set(key, [...(groups.get(key) ?? []), v]);
   }
   return (
     <>
       <Card>
         <h2 className="font-bold mb-1">📚 Library</h2>
         <p className="text-slate-500 text-sm">
-          Extra videos from your tutor, open to every student. Watch them any time.
+          Extra lessons from your tutor, open to every student. Open a playlist to see its videos in order.
         </p>
       </Card>
-      {[...groups.entries()].map(([category, list]) => (
-        <Card key={category}>
-          <h2 className="font-bold mb-2">{category}</h2>
+
+      {playlists.length > 0 && (
+        <>
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2 px-1">Playlists</p>
+          {playlists.map((p) => (
+            <PlaylistCard key={p.id} title={p.title} description={p.description} videos={p.videos} />
+          ))}
+        </>
+      )}
+
+      {general.length > 0 && (
+        <Card>
+          <h2 className="font-bold mb-2">More videos</h2>
           <ul className="divide-y">
-            {list.map((v) => (
-              <li key={v.id} className="py-2.5">
-                <a href={v.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3">
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-red-600 text-white" aria-hidden>
-                    ▶
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block font-medium text-sm">{v.title}</span>
-                    {v.description && (
-                      <span className="block text-xs text-slate-500 whitespace-pre-line">{v.description}</span>
-                    )}
-                  </span>
-                </a>
-              </li>
+            {general.map((v) => (
+              <LibraryVideoRow key={v.id} video={v} />
             ))}
           </ul>
         </Card>
-      ))}
+      )}
     </>
+  );
+}
+
+function PlaylistCard({
+  title,
+  description,
+  videos,
+}: {
+  title: string;
+  description: string | null;
+  videos: LibraryVideo[];
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className={`rounded-2xl bg-white shadow-sm p-4 mb-3 ring-1 ${open ? "ring-2 ring-brand-400" : "ring-slate-100"}`}>
+      <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-3 text-left" aria-expanded={open}>
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-600 text-white text-lg" aria-hidden>
+          🎞️
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-semibold">{title}</span>
+          <span className="block text-xs text-slate-400">
+            {videos.length} video{videos.length === 1 ? "" : "s"} · playlist
+          </span>
+        </span>
+        <span className={`text-slate-400 transition-transform ${open ? "rotate-90" : ""}`}>›</span>
+      </button>
+      {open && (
+        <div className="mt-3">
+          {description && <p className="text-sm text-slate-600 mb-2 whitespace-pre-line">{description}</p>}
+          <ol className="divide-y">
+            {videos.map((v, i) => (
+              <LibraryVideoRow key={v.id} video={v} number={i + 1} />
+            ))}
+          </ol>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function LibraryVideoRow({ video, number }: { video: LibraryVideo; number?: number }) {
+  return (
+    <li className="py-2.5">
+      <a href={video.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3">
+        <span className="relative grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-red-600 text-white" aria-hidden>
+          ▶
+          {number != null && (
+            <span className="absolute -top-1.5 -left-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-slate-800 px-1 text-[10px] font-bold">
+              {number}
+            </span>
+          )}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-medium text-sm">{video.title}</span>
+          {video.description && (
+            <span className="block text-xs text-slate-500 whitespace-pre-line">{video.description}</span>
+          )}
+        </span>
+      </a>
+    </li>
   );
 }
 

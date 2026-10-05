@@ -28,7 +28,7 @@ export default async function PortalPage() {
     // Same for the Library: an empty shelf, never a broken portal.
     getStudentLibrary().catch((e) => {
       console.error("[portal] library load failed:", e);
-      return [];
+      return { playlists: [], videos: [] };
     }),
   ]);
   return <PortalClient data={data} resources={resources} library={library} />;

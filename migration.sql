@@ -61,13 +61,26 @@ CREATE TABLE video_progress (
   PRIMARY KEY (student_id, video_id)
 );
 
--- General videos every student can watch (not tied to a weekend or intake).
+-- Library: videos every student can watch (not tied to a weekend or intake).
+-- A playlist is a topic guide whose videos play in order; a video with no
+-- playlist is a general video. Deleting a playlist keeps its videos.
+CREATE TABLE library_playlists (
+  id           serial PRIMARY KEY,
+  title        text NOT NULL,
+  description  text,
+  sort_order   int  NOT NULL DEFAULT 0,
+  is_published boolean NOT NULL DEFAULT true,  -- false = being built, hidden from students
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX uq_library_playlists_title ON library_playlists (lower(title));
+
 CREATE TABLE library_videos (
   id          serial PRIMARY KEY,
+  playlist_id int REFERENCES library_playlists(id) ON DELETE SET NULL,  -- null = general video
   title       text NOT NULL,
   url         text NOT NULL,
   description text,
-  category    text,                     -- heading the portal groups by; empty = "General"
+  category    text,                     -- legacy (pre-playlists); no longer used by the app
   sort_order  int  NOT NULL DEFAULT 0,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
@@ -312,6 +325,7 @@ CREATE INDEX idx_attendance_session    ON attendance(session_id);
 CREATE INDEX idx_attendance_student    ON attendance(student_id);
 CREATE INDEX idx_weekend_videos        ON weekend_videos(weekend_id, sort_order);
 CREATE INDEX idx_library_videos        ON library_videos(category, sort_order, id);
+CREATE INDEX idx_library_videos_playlist ON library_videos(playlist_id, sort_order, id);
 CREATE INDEX idx_homework_weekend      ON homework_submissions(weekend_id);
 CREATE INDEX idx_homework_status       ON homework_submissions(status);
 CREATE INDEX idx_questions_student     ON questions(student_id);

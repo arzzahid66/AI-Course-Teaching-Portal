@@ -89,7 +89,7 @@ export default async function AdminPage({
     settle(getLoginLogs(), []),
     settle(getResourceBoard(), { resources: [], requests: [], codeRequests: [], helpVideo: null }),
     settle(getPrivacyMode(), false),
-    settle(getLibraryAdmin(), []),
+    settle(getLibraryAdmin(), { playlists: [], videos: [] }),
   ]);
 
   return (

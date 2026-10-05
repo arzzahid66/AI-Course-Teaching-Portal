@@ -49,7 +49,7 @@ import type { DashboardStats } from "@/actions/batches";
 import { setPrivacyMode, type FeeBoard } from "@/actions/fees";
 import type { ResourceBoard } from "@/lib/resources";
 import type { HomeworkBoard } from "@/actions/curriculum";
-import type { LibraryVideo } from "@/actions/library";
+import type { LibraryData } from "@/actions/library";
 import type { BatchRow, PaymentAccount, ProgressRow } from "@/lib/course";
 import type { Curriculum } from "@/lib/curriculum";
 import {
@@ -123,7 +123,7 @@ export default function AdminDashboard({
   loginLogs: LoginLogRow[];
   resourceBoard: ResourceBoard;
   privacy: boolean;
-  library: LibraryVideo[];
+  library: LibraryData;
 }) {
   const [tab, setTab] = useState<Tab>(batchData ? "dashboard" : "intakes");
   // Privacy Mode is flipped optimistically so the screen masks on the very next
@@ -289,7 +289,7 @@ export default function AdminDashboard({
             />
           )}
           {tab === "curriculum" && <CurriculumTab curriculum={curriculum} initialLevel={batch?.level ?? 1} />}
-          {tab === "library" && <LibraryTab videos={library} />}
+          {tab === "library" && <LibraryTab library={library} />}
           {tab === "homework" && batchData && <HomeworkTab board={batchData.homework} />}
           {tab === "progress" && batchData && <ProgressTab batch={batchData.batch} rows={batchData.progress} />}
           {tab === "quiz" && (

@@ -15,7 +15,7 @@ import {
 import { studentLogout } from "@/actions/studentAuth";
 import { saveStudentSubscription } from "@/actions/push";
 import { usePushSubscription } from "@/lib/usePushSubscription";
-import type { LibraryVideo } from "@/actions/library";
+import type { LibraryData } from "@/actions/library";
 import { COURSE_NAME, INSTRUCTORS, type Instructor } from "@/lib/constants";
 import {
   Card,
@@ -70,7 +70,7 @@ export default function PortalClient({
 }: {
   data: PortalData;
   resources: StudentResourceData;
-  library: LibraryVideo[];
+  library: LibraryData;
 }) {
   const [tab, setTab] = useState<Tab>("course");
   const [showBio, setShowBio] = useState(false);
@@ -141,7 +141,7 @@ export default function PortalClient({
         </>
       )}
       {tab === "videos" && <VideosTab data={data} />}
-      {tab === "library" && <LibraryTab videos={library} />}
+      {tab === "library" && <LibraryTab library={library} />}
       {tab === "homework" && <HomeworkTab data={data} />}
       {tab === "progress" && <ProgressTab data={data} />}
       {tab === "fees" && <FeesTab data={data} />}
