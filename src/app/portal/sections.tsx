@@ -271,6 +271,8 @@ export function FeeDueBanner({ data, onPay }: { data: PortalData; onPay: () => v
   if (next === null || closed !== false) return null;
 
   const urgent = next.past_due;
+  // A partly paid month never locks the account, so don't threaten it.
+  const partlyPaid = next.paid > 0;
 
   return (
     <div
@@ -280,7 +282,11 @@ export function FeeDueBanner({ data, onPay }: { data: PortalData; onPay: () => v
     >
       <div className="flex items-start justify-between gap-3">
         <p className={`text-sm font-bold ${urgent ? "text-amber-900" : "text-brand-800"}`}>
-          {urgent ? "\u23F3 Grace period \u2014 fee pending" : "\u{1F4B3} Fee due"}
+          {partlyPaid
+            ? "\u{1F4B3} Balance pending"
+            : urgent
+              ? "\u23F3 Grace period \u2014 fee pending"
+              : "\u{1F4B3} Fee due"}
         </p>
         <button
           onClick={close}
@@ -293,14 +299,22 @@ export function FeeDueBanner({ data, onPay }: { data: PortalData; onPay: () => v
           {"\u00D7"}
         </button>
       </div>
-      <p className={`text-sm mt-1 ${urgent ? "text-amber-900" : "text-slate-700"}`}>
-        Month {next.month_no} fee {"\u2014"} <b>{rs(next.remaining)}</b>{" "}
-        {urgent
-          ? `is unpaid. It was due on ${fmtDay(next.due_date, true)}.`
-          : `is due on ${fmtDay(next.due_date, true)}.`}{" "}
-        Pay by <b>{fmtDay(next.grace_until, true)}</b>, otherwise your account is deactivated and
-        you lose access to videos, quizzes and homework.
-      </p>
+      {partlyPaid ? (
+        <p className={`text-sm mt-1 ${urgent ? "text-amber-900" : "text-slate-700"}`}>
+          Month {next.month_no}: you&apos;ve paid {rs(next.paid)}, <b>{rs(next.remaining)}</b> is still left
+          {urgent ? "" : ` (due ${fmtDay(next.due_date, true)})`}. Your account stays active {"\u2014"} please
+          clear the balance as soon as you can.
+        </p>
+      ) : (
+        <p className={`text-sm mt-1 ${urgent ? "text-amber-900" : "text-slate-700"}`}>
+          Month {next.month_no} fee {"\u2014"} <b>{rs(next.remaining)}</b>{" "}
+          {urgent
+            ? `is unpaid. It was due on ${fmtDay(next.due_date, true)}.`
+            : `is due on ${fmtDay(next.due_date, true)}.`}{" "}
+          Pay by <b>{fmtDay(next.grace_until, true)}</b>, otherwise your account is deactivated and
+          you lose access to videos, quizzes and homework.
+        </p>
+      )}
       <button
         onClick={onPay}
         className={`mt-2.5 rounded-xl text-white text-sm font-semibold px-4 py-2 active:scale-[0.97] transition ${
@@ -944,7 +958,7 @@ export function FeesTab({ data }: { data: PortalData }) {
               </div>
               <p className="text-lg font-bold tabular-nums mt-1">{rs(i.amount - i.discount)}</p>
               <p className="text-xs text-slate-500">Due {fmtDay(i.due_date)}</p>
-              {i.remaining > 0 && i.status !== "overdue" && (
+              {i.remaining > 0 && i.paid === 0 && i.status !== "overdue" && (
                 <p className="text-[11px] text-slate-400">Pay by {fmtDay(i.grace_until)} to keep your account active</p>
               )}
               {i.remaining > 0 && i.paid > 0 && <p className="text-[11px] text-amber-700">{rs(i.remaining)} left</p>}

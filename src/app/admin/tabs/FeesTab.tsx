@@ -171,7 +171,11 @@ export default function FeesTab({
                           <button
                             onClick={() => setEditingInvoice({ row: r, invoice: i })}
                             className="text-left"
-                            title={`Due ${fmtDay(i.due_date)} · blocked after ${fmtDay(i.grace_until)}`}
+                            title={
+                              i.paid > 0
+                                ? `Due ${fmtDay(i.due_date)} · part paid, so never blocked`
+                                : `Due ${fmtDay(i.due_date)} · blocked after ${fmtDay(i.grace_until)} if nothing is paid`
+                            }
                           >
                             <FeeBadge status={i.status} />
                             <span className="block text-[11px] text-slate-400 tabular-nums">

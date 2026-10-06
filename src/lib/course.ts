@@ -83,13 +83,18 @@ export type InvoiceView = {
   status: FeeStatus;
   /** Its due date has arrived (it may still be inside the grace period). */
   past_due: boolean;
+  /** The grace period has ended. It only blocks if nothing was paid (see `blocks`). */
+  past_grace: boolean;
   /**
    * Whole days from today (Asia/Karachi) to the due date. Negative once the
    * due date has passed. Computed in SQL so "today" is always the server's
    * Karachi date, never the student's device clock.
    */
   days_to_due: number;
-  /** Unpaid past the grace period — locks the account. */
+  /**
+   * Nothing paid at all past the grace period — locks the account. A month
+   * that is partly paid never locks: the student is trusted to clear the rest.
+   */
   blocks: boolean;
   note: string | null;
 };
@@ -114,10 +119,12 @@ function toInvoiceView(r: InvoiceSqlRow): InvoiceView {
   const net = Math.max(0, Number(r.amount) - Number(r.discount));
   const paid = Number(r.paid);
   const remaining = Math.max(0, net - paid);
+  // Only a month with nothing paid can lock the account.
+  const blocks = remaining > 0 && paid === 0 && Boolean(r.past_grace);
   let status: FeeStatus;
   if (net === 0) status = "waived";
   else if (remaining === 0) status = "paid";
-  else if (r.past_due && r.past_grace) status = "overdue";
+  else if (blocks) status = "overdue";
   else if (paid > 0) status = "partial";
   else status = "unpaid";
   return {
@@ -133,8 +140,9 @@ function toInvoiceView(r: InvoiceSqlRow): InvoiceView {
     remaining,
     status,
     past_due: Boolean(r.past_due),
+    past_grace: Boolean(r.past_grace),
     days_to_due: Number(r.days_to_due),
-    blocks: remaining > 0 && r.past_grace,
+    blocks,
     note: r.note,
   };
 }
@@ -167,10 +175,10 @@ export async function loadInvoices(opts: {
 }
 
 /**
- * First invoice that blocks this student, across active enrollments: unpaid
- * `grace_days` after the later of its due date and the day they joined (so a
- * late joiner still gets the full grace period). Locks the account (see
- * getAccountLock).
+ * First invoice that blocks this student, across active enrollments: nothing
+ * paid `grace_days` after the later of its due date and the day they joined
+ * (so a late joiner still gets the full grace period). A partly paid month
+ * never blocks. Locks the account (see getAccountLock).
  */
 export async function getBlockingInvoice(studentId: number): Promise<InvoiceView | null> {
   const rows = (await sql`
@@ -193,7 +201,7 @@ export async function getBlockingInvoice(studentId: number): Promise<InvoiceView
   return rows.map(toInvoiceView).find((i) => i.blocks) ?? null;
 }
 
-/** Ids of students whose account is locked by an unpaid fee month (same rule as getBlockingInvoice). */
+/** Ids of students whose account is locked by a fee month with nothing paid (same rule as getBlockingInvoice). */
 export async function loadFeeLockedStudentIds(): Promise<Set<number>> {
   const rows = (await sql`
     SELECT DISTINCT e.student_id
@@ -203,8 +211,8 @@ export async function loadFeeLockedStudentIds(): Promise<Set<number>> {
     WHERE e.status = 'active'
       AND (GREATEST(i.due_date, (e.joined_at AT TIME ZONE 'Asia/Karachi')::date) + b.grace_days)
         < (now() AT TIME ZONE 'Asia/Karachi')::date
-      AND GREATEST(0, i.amount - i.discount)
-        > COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id), 0)
+      AND GREATEST(0, i.amount - i.discount) > 0
+      AND COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id), 0) = 0
   `) as { student_id: number }[];
   return new Set(rows.map((r) => Number(r.student_id)));
 }

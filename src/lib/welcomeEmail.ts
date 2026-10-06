@@ -158,7 +158,10 @@ export async function buildWelcomeEmail(studentId: number): Promise<{ msg: Email
         lines: [
           `We've received ${rs(paid)}. Thank you!`,
           ...receiptLines,
-          `Next payment: Month ${next.month_no} — ${rs(next.remaining)}, due ${day(next.due_date)}. Please pay by ${day(next.grace_until)} to keep your account active.`,
+          `Next payment: Month ${next.month_no} — ${rs(next.remaining)}, due ${day(next.due_date)}. ` +
+            (next.paid > 0
+              ? "You've paid part of this month, so your account stays active. Please clear the rest soon."
+              : `Please pay by ${day(next.grace_until)} to keep your account active.`),
         ],
       });
     } else if (next) {

@@ -98,7 +98,9 @@ export async function queuePaymentReceiptEmail(receiptNo: string): Promise<void>
                   : "",
                 `Month ${nextDue.month_no}: ${rs(nextDue.remaining)}`,
                 `Due: ${day(nextDue.due_date)}`,
-                `Please pay by ${day(nextDue.grace_until)} to keep your account active.`,
+                nextDue.paid > 0
+                  ? "You've paid part of this month, so your account stays active. Please clear the rest soon."
+                  : `Please pay by ${day(nextDue.grace_until)} to keep your account active.`,
                 remaining > nextDue.remaining
                   ? `Left after that: ${rs(remaining - nextDue.remaining)}.`
                   : "",
