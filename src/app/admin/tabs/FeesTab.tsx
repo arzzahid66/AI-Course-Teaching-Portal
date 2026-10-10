@@ -9,8 +9,10 @@ import {
   savePaymentAccount,
   saveTutorWhatsapp,
   sendFeeReminders,
+  setFeePlan,
   updateInvoice,
   type FeeBoard,
+  type FeePlan,
   type FeeBoardRow,
   type FeePaymentRow,
 } from "@/actions/fees";
@@ -35,6 +37,21 @@ import {
   useRs,
 } from "../ui";
 
+/**
+ * Read a student's current plan back from their months: every month waived =
+ * free, no discount anywhere = full, anything else = partial (the monthly
+ * amount shown is the one most of their months charge).
+ */
+function currentPlan(r: FeeBoardRow): { plan: FeePlan; monthly: number } {
+  const nets = r.invoices.map((i) => Math.max(0, i.amount - i.discount));
+  if (nets.length > 0 && nets.every((n) => n === 0)) return { plan: "free", monthly: 0 };
+  if (r.invoices.every((i) => i.discount === 0)) return { plan: "full", monthly: nets[0] ?? 0 };
+  const counts = new Map<number, number>();
+  for (const n of nets) counts.set(n, (counts.get(n) ?? 0) + 1);
+  const monthly = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  return { plan: "partial", monthly };
+}
+
 export default function FeesTab({
   batch,
   board,
@@ -52,6 +69,7 @@ export default function FeesTab({
   const [paying, setPaying] = useState<FeeBoardRow | null>(null);
   const [editingInvoice, setEditingInvoice] = useState<{ row: FeeBoardRow; invoice: InvoiceView } | null>(null);
   const [viewingReceipts, setViewingReceipts] = useState<FeeBoardRow | null>(null);
+  const [planFor, setPlanFor] = useState<FeeBoardRow | null>(null);
   const [query, setQuery] = useState("");
 
   const months = Array.from({ length: Math.max(batch.months, ...board.rows.map((r) => r.invoices.length)) }, (_, i) => i + 1);
@@ -159,7 +177,8 @@ export default function FeesTab({
                     {r.enrollment_status !== "active" && (
                       <span className="text-xs text-slate-400 font-normal"> · {r.enrollment_status}</span>
                     )}
-                    <span className="block mt-1">
+                    <span className="flex flex-wrap gap-1 mt-1">
+                      <PlanChip row={r} onClick={() => setPlanFor(r)} />
                       <EmailStudentButton studentId={r.student_id} name={r.name} defaultSubject="About your fees" />
                     </span>
                   </td>
@@ -212,7 +231,8 @@ export default function FeesTab({
           </table>
         </div>
         <p className="text-xs text-slate-400 mt-2">
-          Tap a month to change its due date, amount or discount — or to undo a payment recorded by mistake.
+          Tap a student&apos;s plan to make them full fee, partial (reduced) or free. Tap a month to change its due
+          date, amount or discount — or to undo a payment recorded by mistake.
         </p>
       </Card>
 
@@ -239,6 +259,7 @@ export default function FeesTab({
       <PaymentAccountsCard accounts={accounts} whatsapp={whatsapp} />
 
       {paying && <RecordPaymentModal row={paying} onClose={() => setPaying(null)} />}
+      {planFor && <FeePlanModal row={planFor} monthlyFee={batch.monthly_fee} onClose={() => setPlanFor(null)} />}
       {editingInvoice && (
         <InvoiceModal
           name={editingInvoice.row.name}
@@ -255,6 +276,121 @@ export default function FeesTab({
         />
       )}
     </>
+  );
+}
+
+function PlanChip({ row, onClick }: { row: FeeBoardRow; onClick: () => void }) {
+  const rs = useRs();
+  const { plan, monthly } = currentPlan(row);
+  const style =
+    plan === "free"
+      ? "border-violet-200 bg-violet-50 text-violet-700"
+      : plan === "partial"
+        ? "border-amber-200 bg-amber-50 text-amber-800"
+        : "border-slate-200 text-slate-600";
+  const label = plan === "free" ? "Free" : plan === "partial" ? `Partial · ${rs(monthly)}/mo` : "Full fee";
+  return (
+    <button
+      onClick={onClick}
+      title="Change fee plan"
+      className={`text-xs font-normal rounded-lg border px-2 py-0.5 ${style}`}
+    >
+      {label} ▾
+    </button>
+  );
+}
+
+function FeePlanModal({
+  row,
+  monthlyFee,
+  onClose,
+}: {
+  row: FeeBoardRow;
+  monthlyFee: number;
+  onClose: () => void;
+}) {
+  const rs = useRs();
+  const amountType = useAmountInputType();
+  const save = useAction();
+  const current = currentPlan(row);
+  const [plan, setPlan] = useState<FeePlan>(current.plan);
+  // A sensible starting amount for a new partial plan: half the normal fee.
+  const [monthly, setMonthly] = useState(
+    String(current.plan === "partial" ? current.monthly : Math.round(monthlyFee / 2))
+  );
+  const m = Math.max(0, Math.round(Number(monthly) || 0));
+  const total = row.invoices.reduce(
+    (s, i) => s + (plan === "free" ? 0 : plan === "partial" ? Math.min(m, i.amount) : i.amount),
+    0
+  );
+
+  const options: [FeePlan, string, string][] = [
+    ["full", "Full fee", `${rs(monthlyFee)} a month, the normal fee.`],
+    ["partial", "Partial (reduced fee)", "The student pays a lower amount every month."],
+    ["free", "Free", "Every month waived. Never locked for fees."],
+  ];
+
+  return (
+    <Modal title={`Fee plan — ${row.name}`} onClose={onClose}>
+      <form action={(fd) => save.run(() => setFeePlan(row.enrollment_id, fd), { onDone: onClose })} className="space-y-3">
+        <div className="space-y-2">
+          {options.map(([value, label, hint]) => (
+            <label
+              key={value}
+              className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 cursor-pointer ${
+                plan === value ? "border-brand-500 bg-brand-50" : "border-slate-200"
+              }`}
+            >
+              <input
+                type="radio"
+                name="plan"
+                value={value}
+                checked={plan === value}
+                onChange={() => setPlan(value)}
+                className="mt-1 h-4 w-4 accent-brand-600"
+              />
+              <span>
+                <span className="block text-sm font-semibold">{label}</span>
+                <span className="block text-xs text-slate-500">{hint}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+
+        {plan === "partial" && (
+          <label className="block">
+            <span className="block text-xs font-medium text-slate-500 mb-1">Student pays per month (Rs)</span>
+            <input
+              name="monthly"
+              type={amountType}
+              min={1}
+              value={monthly}
+              onChange={(e) => setMonthly(e.target.value)}
+              className={fieldClass()}
+            />
+          </label>
+        )}
+
+        <p className="text-sm text-slate-600 rounded-xl bg-slate-50 px-3 py-2">
+          New total <b className="tabular-nums">{rs(total)}</b> · already paid{" "}
+          <b className="tabular-nums">{rs(row.paid)}</b> · left{" "}
+          <b className="tabular-nums">{rs(Math.max(0, total - row.paid))}</b>
+        </p>
+        <p className="text-xs text-slate-400">
+          Payments and receipts are kept exactly as they are; only what each month charges changes. To change just one
+          month, tap that month in the grid instead.
+        </p>
+
+        <label className="flex items-center gap-2 text-sm text-slate-600">
+          <input name="notify_email" type="checkbox" className="h-4 w-4 accent-brand-600" />
+          Email the student about their new plan
+        </label>
+        <button type="submit" disabled={save.pending} className={`w-full ${btn.primary}`}>
+          Save plan
+        </button>
+        <Msg error={save.error} />
+      </form>
+    </Modal>
   );
 }
 

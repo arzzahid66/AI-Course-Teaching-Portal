@@ -209,6 +209,85 @@ export async function updateInvoice(id: number, formData: FormData): Promise<{ e
   return {};
 }
 
+// ---------------------------------------------------------------------------
+// Fee plan — set every month of an enrollment at once
+// ---------------------------------------------------------------------------
+export type FeePlan = "full" | "partial" | "free";
+
+/** Notes this action writes, so switching plan can replace them without touching a tutor's own note. */
+const FREE_NOTE = "Free seat";
+const PARTIAL_NOTE_PREFIX = "Reduced fee:";
+
+/**
+ * Put a student on a fee plan for one intake. Only each month's discount (and
+ * a plan note) changes — payments and receipts are never touched:
+ *   full    — discount 0, the normal monthly fee
+ *   partial — the student pays `monthly` Rs a month (capped at the month's fee)
+ *   free    — every month waived (never locks the account)
+ * Refused if a month already has more paid than the new plan charges, so no
+ * payment is ever left "over" a month.
+ */
+export async function setFeePlan(enrollmentId: number, formData: FormData): Promise<{ error?: string }> {
+  await assertAdmin();
+  const plan = String(formData.get("plan") ?? "") as FeePlan;
+  if (plan !== "full" && plan !== "partial" && plan !== "free") return { error: "Pick a fee plan." };
+  const monthly = Math.round(Number(formData.get("monthly") || 0));
+  if (plan === "partial" && (Number.isNaN(monthly) || monthly <= 0)) {
+    return { error: "Enter how much the student pays per month (above Rs 0)." };
+  }
+
+  const invoices = await loadInvoices({ enrollmentId });
+  if (invoices.length === 0) return { error: "This enrollment has no fee months." };
+  // What each month will charge under the new plan.
+  const netFor = (amount: number) => (plan === "free" ? 0 : plan === "partial" ? Math.min(monthly, amount) : amount);
+
+  const over = invoices.filter((i) => i.paid > netFor(i.amount));
+  if (over.length > 0) {
+    return {
+      error:
+        over.map((i) => `Month ${i.month_no} already has ${rsText(i.paid)} paid`).join(", ") +
+        ` — more than the new plan charges. Delete that receipt first, or pick a higher amount.`,
+    };
+  }
+
+  const planNote = plan === "free" ? FREE_NOTE : plan === "partial" ? `${PARTIAL_NOTE_PREFIX} ${rsText(monthly)}/month` : null;
+  await sql`
+    UPDATE fee_invoices
+    SET discount = CASE
+          WHEN ${plan} = 'free' THEN amount
+          WHEN ${plan} = 'partial' THEN GREATEST(0, amount - ${monthly}::int)
+          ELSE 0
+        END,
+        -- Keep a note the tutor wrote by hand; only replace notes a plan wrote.
+        note = CASE
+          WHEN note IS NULL OR note = ${FREE_NOTE} OR note LIKE ${PARTIAL_NOTE_PREFIX + "%"} THEN ${planNote}
+          ELSE note
+        END
+    WHERE enrollment_id = ${enrollmentId}
+  `;
+
+  if (formData.get("notify_email") === "on") {
+    const total = invoices.reduce((s, i) => s + netFor(i.amount), 0);
+    const paid = invoices.reduce((s, i) => s + i.paid, 0);
+    queueStudentEmail(invoices[0].student_id, {
+      subject: plan === "free" ? "Your course is now free" : "Your fee plan has been updated",
+      heading: plan === "free" ? "You're on a free seat" : "Your fee plan was updated",
+      lines: [
+        plan === "free"
+          ? "Your tutor has made your course free. There is nothing to pay."
+          : plan === "partial"
+            ? `Your fee is now ${rsText(monthly)} per month.`
+            : "You're on the standard monthly fee.",
+        plan === "free" ? null : `Total course fee: ${rsText(total)} · paid so far: ${rsText(paid)} · left: ${rsText(Math.max(0, total - paid))}.`,
+        "You can see every month in the Fees section of the portal.",
+      ],
+    });
+  }
+  revalidatePath("/admin");
+  revalidatePath("/portal");
+  return {};
+}
+
 /** Push a reminder to every student in the intake with a month already due and unpaid. */
 export async function sendFeeReminders(batchId: number): Promise<{ sent: number; error?: string }> {
   await assertAdmin();
