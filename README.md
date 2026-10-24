@@ -41,7 +41,7 @@ always re-checked on the server.
 | `/` | Everyone | Landing page with login links |
 | `/login` | Students | Email + password login |
 | `/portal` | Students | Class, Course, Videos, Homework, Progress, Fees, Quiz, **Tools**, Leave, Ask |
-| `/admin?batch=<id>` | Tutor | Dashboard, Intakes, Students, Classes, Fees, Curriculum, Homework, Progress, Quiz, **Tools**, Questions, Leave, Logs — scoped to the intake picked in the header |
+| `/admin?batch=<id>` | Tutor | Dashboard, Intakes, Students, Classes, Fees, **Finance**, Curriculum, Homework, Progress, Quiz, **Tools**, Questions, Leave, Logs — scoped to the intake picked in the header |
 
 **Payment details** (EasyPaisa / JazzCash / bank accounts and the WhatsApp number for
 screenshots) are stored in the database and edited in **Admin → Fees → Payment accounts**.

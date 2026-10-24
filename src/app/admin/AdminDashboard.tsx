@@ -68,12 +68,15 @@ import LibraryTab from "./tabs/LibraryTab";
 import HomeworkTab from "./tabs/HomeworkTab";
 import ProgressTab from "./tabs/ProgressTab";
 import ResourcesTab from "./tabs/ResourcesTab";
+import FinanceTab from "./tabs/FinanceTab";
+import { subscriptions, RENEWAL_WARN_DAYS, type FinanceBoard } from "@/lib/finance";
 
 type Tab =
   | "dashboard"
   | "intakes"
   | "students"
   | "fees"
+  | "finance"
   | "curriculum"
   | "library"
   | "homework"
@@ -108,6 +111,7 @@ export default function AdminDashboard({
   resourceBoard: initialResourceBoard,
   privacy: initialPrivacy,
   library,
+  finance,
 }: {
   batches: BatchRow[];
   batchData: BatchData | null;
@@ -124,6 +128,7 @@ export default function AdminDashboard({
   resourceBoard: ResourceBoard;
   privacy: boolean;
   library: LibraryData;
+  finance: FinanceBoard;
 }) {
   const [tab, setTab] = useState<Tab>(batchData ? "dashboard" : "intakes");
   // Privacy Mode is flipped optimistically so the screen masks on the very next
@@ -180,11 +185,15 @@ export default function AdminDashboard({
   const toMark =
     batchData?.homework.submissions.filter((s) => s.status === "submitted" && s.marks == null).length ?? 0;
 
+  // Subscriptions renewing within the reminder window light up the Finance tab.
+  const financeDue = subscriptions(finance).filter((s) => s.daysLeft <= RENEWAL_WARN_DAYS).length;
+
   const tabs: [Tab, string, number][] = [
     ["dashboard", "Dashboard", 0],
     ["intakes", "Intakes", 0],
     ["students", "Students", 0],
     ["fees", "Fees", 0],
+    ["finance", "Finance", financeDue],
     ["curriculum", "Curriculum", 0],
     ["library", "Library", 0],
     ["homework", "Homework", toMark],
@@ -288,6 +297,7 @@ export default function AdminDashboard({
               whatsapp={whatsapp}
             />
           )}
+          {tab === "finance" && <FinanceTab board={finance} />}
           {tab === "curriculum" && <CurriculumTab curriculum={curriculum} initialLevel={batch?.level ?? 1} />}
           {tab === "library" && <LibraryTab library={library} />}
           {tab === "homework" && batchData && <HomeworkTab board={batchData.homework} />}

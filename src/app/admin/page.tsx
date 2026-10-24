@@ -9,6 +9,8 @@ import { getFeeBoard, getPaymentSettings, getPrivacyMode } from "@/actions/fees"
 import { getResourceBoard } from "@/actions/resources";
 import { getCurriculumAdmin, getHomeworkBoard } from "@/actions/curriculum";
 import { getLibraryAdmin } from "@/actions/library";
+import { getFinanceBoard } from "@/actions/finance";
+import { EMPTY_FINANCE_BOARD } from "@/lib/finance";
 import {
   getQuizzesAdmin,
   getQuizReattemptRequests,
@@ -76,6 +78,7 @@ export default async function AdminPage({
     resourceBoard,
     privacy,
     library,
+    finance,
   ] = await Promise.all([
     selected ? settle(loadBatchData(selected.id, batches), null) : Promise.resolve(null),
     settle(getStudents(), []),
@@ -90,6 +93,8 @@ export default async function AdminPage({
     settle(getResourceBoard(), { resources: [], requests: [], codeRequests: [], helpVideo: null }),
     settle(getPrivacyMode(), false),
     settle(getLibraryAdmin(), { playlists: [], videos: [] }),
+    // Fails (and falls back to empty) until migrations/007_finance.sql is applied.
+    settle(getFinanceBoard(), EMPTY_FINANCE_BOARD),
   ]);
 
   return (
@@ -109,6 +114,7 @@ export default async function AdminPage({
       resourceBoard={resourceBoard}
       privacy={privacy}
       library={library}
+      finance={finance}
     />
   );
 }
