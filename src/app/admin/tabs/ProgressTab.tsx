@@ -2,13 +2,23 @@
 
 import { useState } from "react";
 import type { BatchRow, ProgressRow } from "@/lib/course";
+import type { WeeklyBoard } from "@/actions/progress";
 import { BAND_META, BandBadge, Card, EmailStudentButton, EmptyRow, MiniBar, btn, downloadCsv } from "../ui";
+import WeeklyProgress from "./WeeklyProgress";
 
 type SortKey = "score" | "name" | "homework" | "quiz" | "videos";
 
 const pctText = (p: number | null) => (p == null ? "—" : `${p}%`);
 
-export default function ProgressTab({ batch, rows }: { batch: BatchRow; rows: ProgressRow[] }) {
+export default function ProgressTab({
+  batch,
+  rows,
+  weekly,
+}: {
+  batch: BatchRow;
+  rows: ProgressRow[];
+  weekly: WeeklyBoard;
+}) {
   const [sort, setSort] = useState<SortKey>("score");
   const [open, setOpen] = useState<number | null>(null);
 
@@ -83,7 +93,10 @@ export default function ProgressTab({ batch, rows }: { batch: BatchRow; rows: Pr
         </p>
       </Card>
 
+      <WeeklyProgress board={weekly} />
+
       <Card>
+        <h2 className="font-bold mb-1">Overall score</h2>
         <div className="overflow-x-auto -mx-2">
           <table className="w-full text-sm">
             <thead>

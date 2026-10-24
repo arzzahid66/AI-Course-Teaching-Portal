@@ -49,6 +49,7 @@ import type { DashboardStats } from "@/actions/batches";
 import { setPrivacyMode, type FeeBoard } from "@/actions/fees";
 import type { ResourceBoard } from "@/lib/resources";
 import type { HomeworkBoard } from "@/actions/curriculum";
+import type { WeeklyBoard } from "@/actions/progress";
 import type { LibraryData } from "@/actions/library";
 import type { BatchRow, PaymentAccount, ProgressRow } from "@/lib/course";
 import type { Curriculum } from "@/lib/curriculum";
@@ -93,6 +94,7 @@ export type BatchData = {
   feeBoard: FeeBoard;
   homework: HomeworkBoard;
   progress: ProgressRow[];
+  weekly: WeeklyBoard;
 };
 
 export default function AdminDashboard({
@@ -301,7 +303,7 @@ export default function AdminDashboard({
           {tab === "curriculum" && <CurriculumTab curriculum={curriculum} initialLevel={batch?.level ?? 1} />}
           {tab === "library" && <LibraryTab library={library} />}
           {tab === "homework" && batchData && <HomeworkTab board={batchData.homework} />}
-          {tab === "progress" && batchData && <ProgressTab batch={batchData.batch} rows={batchData.progress} />}
+          {tab === "progress" && batchData && <ProgressTab batch={batchData.batch} rows={batchData.progress} weekly={batchData.weekly} />}
           {tab === "quiz" && (
             <QuizTab
               quizzes={quizzes}

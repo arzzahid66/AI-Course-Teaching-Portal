@@ -235,6 +235,17 @@ export function computeBooks(board: FinanceBoard): Books {
     return { partner: p, share, feesReceived, expensesPaid, sent, got, takenOut, entitled, balance: takenOut - entitled };
   });
 
+  // Rounding each share on its own can leave the total a rupee off the profit;
+  // hand the leftover rupees to the largest shares so they add up exactly.
+  let leftover = profit - positions.reduce((s, p) => s + p.entitled, 0);
+  const byShare = [...positions].sort((a, b) => b.share - a.share);
+  for (let i = 0; leftover !== 0 && byShare.length > 0; i = (i + 1) % byShare.length) {
+    const step = Math.sign(leftover);
+    byShare[i].entitled += step;
+    byShare[i].balance -= step;
+    leftover -= step;
+  }
+
   return { income, expenses, profit, shareTotal, collector, positions, settlements: settle(positions) };
 }
 

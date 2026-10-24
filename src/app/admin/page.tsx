@@ -10,6 +10,7 @@ import { getResourceBoard } from "@/actions/resources";
 import { getCurriculumAdmin, getHomeworkBoard } from "@/actions/curriculum";
 import { getLibraryAdmin } from "@/actions/library";
 import { getFinanceBoard } from "@/actions/finance";
+import { getWeeklyBoard } from "@/actions/progress";
 import { EMPTY_FINANCE_BOARD } from "@/lib/finance";
 import {
   getQuizzesAdmin,
@@ -38,12 +39,13 @@ async function settle<T>(promise: Promise<T>, fallback: T): Promise<T> {
 async function loadBatchData(batchId: number, batches: Awaited<ReturnType<typeof getBatches>>): Promise<BatchData | null> {
   const batch = batches.find((b) => b.id === batchId);
   if (!batch) return null;
-  const [{ stats, progress }, feeBoard, homework] = await Promise.all([
+  const [{ stats, progress }, feeBoard, homework, weekly] = await Promise.all([
     getBatchOverview(batchId),
     settle(getFeeBoard(batchId), { rows: [], payments: [], paymentRows: [] }),
     settle(getHomeworkBoard(batchId), { submissions: [], missing: [] }),
+    settle(getWeeklyBoard(batchId), { weeks: [], quizzes: [], students: [], homework: {}, quiz: {} }),
   ]);
-  return { batch, stats, feeBoard, homework, progress };
+  return { batch, stats, feeBoard, homework, progress, weekly };
 }
 
 export default async function AdminPage({
