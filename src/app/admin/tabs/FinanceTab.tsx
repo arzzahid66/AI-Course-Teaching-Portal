@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   setupPartners,
   savePartner,
@@ -58,7 +58,7 @@ export default function FinanceTab({ board }: { board: FinanceBoard }) {
 
       <Renewals subs={subs.filter((s) => s.daysLeft <= RENEWAL_WARN_DAYS)} />
 
-      <MonthTable months={months} />
+      <MonthTable months={months} expenses={board.expenses} onEdit={setEditing} />
 
       <ExpenseList board={board} subs={subs} onEdit={setEditing} />
 
@@ -84,7 +84,15 @@ function Big({ label, value, tone }: { label: string; value: string; tone: strin
 // Month by month
 // ---------------------------------------------------------------------------
 
-function MonthTable({ months }: { months: ReturnType<typeof buildMonths> }) {
+function MonthTable({
+  months,
+  expenses,
+  onEdit,
+}: {
+  months: ReturnType<typeof buildMonths>;
+  expenses: FinanceExpense[];
+  onEdit: (e: FinanceExpense) => void;
+}) {
   const rs = useRs();
   if (months.length === 0) return null;
   const total = months.reduce(
@@ -104,16 +112,40 @@ function MonthTable({ months }: { months: ReturnType<typeof buildMonths> }) {
           </tr>
         </thead>
         <tbody>
-          {[...months].reverse().map((m) => (
-            <tr key={m.ym} className="border-b">
-              <td className="py-2 font-medium">{monthLabel(m.ym)}</td>
-              <td className="py-2 text-right tabular-nums text-emerald-700">{rs(m.income)}</td>
-              <td className="py-2 text-right tabular-nums text-rose-600">{rs(m.expenses)}</td>
-              <td className={`py-2 text-right tabular-nums font-semibold ${m.profit < 0 ? "text-rose-600" : ""}`}>
-                {rs(m.profit)}
-              </td>
-            </tr>
-          ))}
+          {[...months].reverse().map((m) => {
+            const spent = expenses.filter((e) => e.spent_on.startsWith(m.ym));
+            return (
+              <Fragment key={m.ym}>
+                <tr className={spent.length ? "" : "border-b"}>
+                  <td className="pt-2 pb-1 font-medium">{monthLabel(m.ym)}</td>
+                  <td className="pt-2 pb-1 text-right tabular-nums text-emerald-700">{rs(m.income)}</td>
+                  <td className="pt-2 pb-1 text-right tabular-nums text-rose-600">{rs(m.expenses)}</td>
+                  <td className={`pt-2 pb-1 text-right tabular-nums font-semibold ${m.profit < 0 ? "text-rose-600" : ""}`}>
+                    {rs(m.profit)}
+                  </td>
+                </tr>
+                {/* What the month's "Spent" is made of: every purchase, tap one to edit it. */}
+                {spent.length > 0 && (
+                  <tr className="border-b">
+                    <td colSpan={4} className="pb-2">
+                      <div className="flex flex-wrap gap-1.5">
+                        {spent.map((e) => (
+                          <button
+                            key={e.id}
+                            onClick={() => onEdit(e)}
+                            className="text-xs rounded-full bg-rose-50 text-slate-700 ring-1 ring-rose-100 px-2 py-0.5 hover:bg-rose-100"
+                            title={`${fmtDay(e.spent_on)} · tap to edit`}
+                          >
+                            {e.title} <b className="tabular-nums text-rose-700">{rs(e.amount)}</b>
+                          </button>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
         </tbody>
         <tfoot>
           <tr className="font-bold">
