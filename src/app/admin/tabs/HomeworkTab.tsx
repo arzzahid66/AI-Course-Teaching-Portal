@@ -11,9 +11,11 @@ const STATUS: Record<string, { label: string; className: string }> = {
 };
 
 export default function HomeworkTab({ board }: { board: HomeworkBoard }) {
-  const [filter, setFilter] = useState<"todo" | "all">("todo");
+  const [filter, setFilter] = useState<"todo" | "sent_back" | "all">("todo");
   const todo = board.submissions.filter((s) => s.status === "submitted" && s.marks == null);
-  const shown = filter === "todo" ? todo : board.submissions;
+  // Sent back with "Needs changes": waiting on the student to submit again.
+  const sentBack = board.submissions.filter((s) => s.status === "needs_changes");
+  const shown = filter === "todo" ? todo : filter === "sent_back" ? sentBack : board.submissions;
 
   return (
     <>
@@ -24,6 +26,7 @@ export default function HomeworkTab({ board }: { board: HomeworkBoard }) {
             {(
               [
                 ["todo", `To mark (${todo.length})`],
+                ["sent_back", `Sent back (${sentBack.length})`],
                 ["all", `All (${board.submissions.length})`],
               ] as const
             ).map(([key, label]) => (
@@ -41,6 +44,8 @@ export default function HomeworkTab({ board }: { board: HomeworkBoard }) {
         </div>
         <p className="text-xs text-slate-400 mb-3">
           Marks out of 10 count toward the student&apos;s progress score. Unmarked work is left out until marked.
+          {filter === "sent_back" &&
+            " These are waiting for the student to submit again. When they do, the homework moves back to To mark. If it is fine now, just give marks and Approve."}
         </p>
         <ul className="divide-y">
           {shown.map((s) => (
@@ -48,7 +53,7 @@ export default function HomeworkTab({ board }: { board: HomeworkBoard }) {
           ))}
           {shown.length === 0 && (
             <li className="py-6 text-center text-slate-400 text-sm">
-              {filter === "todo" ? "Nothing to mark." : "No homework submitted yet."}
+              {filter === "todo" ? "Nothing to mark." : filter === "sent_back" ? "Nothing sent back." : "No homework submitted yet."}
             </li>
           )}
         </ul>
