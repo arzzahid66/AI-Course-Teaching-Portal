@@ -586,3 +586,98 @@ export async function setSetting(key: string, value: string): Promise<void> {
     ON CONFLICT (key) DO UPDATE SET value = ${value}
   `;
 }
+
+// ---------------------------------------------------------------------------
+// Rebalance payments — move money sitting "over" a month into the next unpaid ones
+// ---------------------------------------------------------------------------
+type PayRowSql = {
+  id: number;
+  invoice_id: number;
+  student_id: number;
+  amount: number;
+  method: string;
+  reference: string | null;
+  receipt_no: string;
+  note: string | null;
+  paid_at: Date;
+};
+
+/**
+ * After a month's charge drops (fee plan, discount, edited amount), some months
+ * may hold more paid than they now charge. Keep the oldest money in each month
+ * and move the excess (same receipt no., method, date) into months that still
+ * have something left to pay, oldest month first. Nothing is ever deleted —
+ * the money just lands on a different month. Returns how much Rs moved.
+ */
+export async function rebalancePayments(enrollmentId: number): Promise<{ moved: number; error?: string }> {
+  const invoices = (await sql`
+    SELECT id, month_no, amount, discount FROM fee_invoices
+    WHERE enrollment_id = ${enrollmentId} ORDER BY month_no
+  `) as { id: number; month_no: number; amount: number; discount: number }[];
+  const rows = (await sql`
+    SELECT p.id, p.invoice_id, p.student_id, p.amount, p.method, p.reference, p.receipt_no, p.note, p.paid_at
+    FROM payments p JOIN fee_invoices i ON i.id = p.invoice_id
+    WHERE i.enrollment_id = ${enrollmentId}
+    ORDER BY p.paid_at, p.id
+  `) as PayRowSql[];
+
+  const net = new Map(invoices.map((i) => [i.id, Math.max(0, i.amount - i.discount)]));
+  const totalNet = [...net.values()].reduce((s, n) => s + n, 0);
+  const totalPaid = rows.reduce((s, r) => s + r.amount, 0);
+  if (totalPaid > totalNet) {
+    return { moved: 0, error: `Rs ${totalPaid - totalNet} more has been paid than the whole course would charge.` };
+  }
+
+  // Keep money in its month up to that month's charge; collect the rest.
+  const used = new Map<number, number>();
+  const kept: PayRowSql[] = [];
+  const overflow: PayRowSql[] = [];
+  for (const r of rows) {
+    const room = (net.get(r.invoice_id) ?? 0) - (used.get(r.invoice_id) ?? 0);
+    const keep = Math.max(0, Math.min(room, r.amount));
+    if (keep > 0) {
+      kept.push({ ...r, amount: keep });
+      used.set(r.invoice_id, (used.get(r.invoice_id) ?? 0) + keep);
+    }
+    if (r.amount - keep > 0) overflow.push({ ...r, amount: r.amount - keep });
+  }
+  if (overflow.length === 0) return { moved: 0 };
+
+  // Pour the extra into months with room, oldest month first.
+  const placed: PayRowSql[] = [];
+  let moved = 0;
+  for (const o of overflow) {
+    let left = o.amount;
+    for (const inv of invoices) {
+      if (left <= 0) break;
+      const room = (net.get(inv.id) ?? 0) - (used.get(inv.id) ?? 0);
+      if (room <= 0) continue;
+      const take = Math.min(room, left);
+      used.set(inv.id, (used.get(inv.id) ?? 0) + take);
+      // Same receipt already on that month? add to it instead of a new line.
+      const same = [...kept, ...placed].find((k) => k.invoice_id === inv.id && k.receipt_no === o.receipt_no);
+      if (same) same.amount += take;
+      else placed.push({ ...o, invoice_id: inv.id, amount: take });
+      left -= take;
+      moved += take;
+    }
+  }
+
+  const final = [...kept, ...placed];
+  // One statement, so it is all-or-nothing.
+  await sql`
+    WITH del AS (DELETE FROM payments WHERE id = ANY(${rows.map((r) => r.id)}::int[]))
+    INSERT INTO payments (invoice_id, student_id, amount, method, reference, receipt_no, note, paid_at)
+    SELECT * FROM unnest(
+      ${final.map((r) => r.invoice_id)}::int[],
+      ${final.map((r) => r.student_id)}::int[],
+      ${final.map((r) => r.amount)}::int[],
+      ${final.map((r) => r.method)}::text[],
+      ${final.map((r) => r.reference)}::text[],
+      ${final.map((r) => r.receipt_no)}::text[],
+      ${final.map((r) => r.note)}::text[],
+      ${final.map((r) => new Date(r.paid_at).toISOString())}::timestamptz[]
+    )
+  `;
+  return { moved };
+}

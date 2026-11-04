@@ -8,6 +8,7 @@ import {
   setSetting,
   insertPayment,
   iso,
+  rebalancePayments,
   loadInvoices,
   loadPaymentAccounts,
   type InvoiceView,
@@ -55,6 +56,7 @@ export type FeePaymentRow = {
   amount: number;
   method: string;
   reference: string | null;
+  note: string | null;
   paid_at: string;
 };
 
@@ -86,7 +88,7 @@ export async function getFeeBoard(batchId: number): Promise<FeeBoard> {
     ` as unknown as Promise<(Omit<FeePayment, "amount" | "paid_at"> & { amount: string; paid_at: Date })[]>,
     sql`
       SELECT p.id, p.invoice_id, i.enrollment_id, i.month_no, p.receipt_no, p.amount,
-        p.method, p.reference, p.paid_at
+        p.method, p.reference, p.note, p.paid_at
       FROM payments p
       JOIN fee_invoices i ON i.id = p.invoice_id
       JOIN enrollments e ON e.id = i.enrollment_id
@@ -168,6 +170,69 @@ export async function deletePayment(receiptNo: string): Promise<{ error?: string
   return {};
 }
 
+/**
+ * Edit one line of a receipt: which month it pays and how much. Method,
+ * transaction ID, date and note are shared by the whole receipt, so they
+ * change on every line of it.
+ */
+export async function updatePaymentRow(id: number, formData: FormData): Promise<{ error?: string }> {
+  await assertAdmin();
+  const monthNo = Number(formData.get("month_no"));
+  const amount = Math.round(Number(formData.get("amount")));
+  const method = String(formData.get("method") ?? "").trim() || "EasyPaisa";
+  const reference = String(formData.get("reference") ?? "").trim() || null;
+  const note = String(formData.get("note") ?? "").trim() || null;
+  const paidOn = String(formData.get("paid_on") ?? "").trim();
+  if (!amount || Number.isNaN(amount) || amount <= 0) return { error: "Enter an amount above 0." };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) return { error: "Pick the date it was paid." };
+
+  const found = (await sql`
+    SELECT p.id, p.receipt_no, p.amount, p.invoice_id, i.enrollment_id
+    FROM payments p JOIN fee_invoices i ON i.id = p.invoice_id WHERE p.id = ${id}
+  `) as { id: number; receipt_no: string; amount: number; invoice_id: number; enrollment_id: number }[];
+  const row = found[0];
+  if (!row) return { error: "That payment no longer exists." };
+
+  const invoices = await loadInvoices({ enrollmentId: row.enrollment_id });
+  const target = invoices.find((i) => i.month_no === monthNo);
+  if (!target) return { error: "Pick which month this pays." };
+  // Room on the target month, not counting this line itself.
+  const room = target.remaining + (target.id === row.invoice_id ? row.amount : 0);
+  if (amount > room) {
+    return {
+      error:
+        room <= 0
+          ? `Month ${monthNo} is already fully paid. Pick another month.`
+          : `Month ${monthNo} only has ${rsText(room)} left to pay. Enter ${rsText(room)} or less.`,
+    };
+  }
+
+  // If the same receipt already has a line on the target month, merge into it.
+  const twin = (await sql`
+    SELECT id FROM payments WHERE receipt_no = ${row.receipt_no} AND invoice_id = ${target.id} AND id <> ${id}
+  `) as { id: number }[];
+  if (twin[0]) {
+    await sql`
+      WITH del AS (DELETE FROM payments WHERE id = ${id})
+      UPDATE payments SET amount = amount + ${amount} WHERE id = ${twin[0].id}
+    `;
+  } else {
+    await sql`UPDATE payments SET invoice_id = ${target.id}, amount = ${amount} WHERE id = ${id}`;
+  }
+  await sql`
+    UPDATE payments
+    SET method = ${method}, reference = ${reference}, note = ${note},
+        paid_at = CASE
+          WHEN (paid_at AT TIME ZONE 'Asia/Karachi')::date = ${paidOn}::date THEN paid_at
+          ELSE (${paidOn}::date + time '12:00') AT TIME ZONE 'Asia/Karachi'
+        END
+    WHERE receipt_no = ${row.receipt_no}
+  `;
+  revalidatePath("/admin");
+  revalidatePath("/portal");
+  return {};
+}
+
 /** Edit one fee month: due date, amount, discount / waiver and note. */
 export async function updateInvoice(id: number, formData: FormData): Promise<{ error?: string }> {
   await assertAdmin();
@@ -190,13 +255,19 @@ export async function updateInvoice(id: number, formData: FormData): Promise<{ e
   if (!row) return { error: "Fee month not found." };
   const paidSoFar = Number(row.paid);
   if (paidSoFar > amount - discount) {
-    return { error: "More than that has already been paid. Delete a receipt first." };
+    // The extra will move to the next unpaid months — only refuse if there is nowhere for it to go.
+    const all = await loadInvoices({ enrollmentId: row.enrollment_id });
+    const otherRoom = all.filter((i) => i.id !== id).reduce((s, i) => s + i.remaining, 0);
+    if (paidSoFar - (amount - discount) > otherRoom) {
+      return { error: "More than that has been paid and no other month has room for the extra. Undo a payment first." };
+    }
   }
   await sql`
     UPDATE fee_invoices
     SET due_date = ${dueDate}, amount = ${amount}, discount = ${discount}, note = ${note || null}
     WHERE id = ${id}
   `;
+  await rebalancePayments(row.enrollment_id);
   // A discount or waiver can clear a month with no money changing hands — the
   // student just sees "Paid", so tell them why.
   const clearedBefore = paidSoFar >= row.amount - row.discount;
@@ -219,13 +290,13 @@ const FREE_NOTE = "Free seat";
 const PARTIAL_NOTE_PREFIX = "Reduced fee:";
 
 /**
- * Put a student on a fee plan for one intake. Only each month's discount (and
- * a plan note) changes — payments and receipts are never touched:
+ * Put a student on a fee plan for one intake. Each month's discount (and a
+ * plan note) changes. Receipts are kept; if a month now holds more paid than it
+ * charges, the extra moves to the next unpaid month (see rebalancePayments):
  *   full    — discount 0, the normal monthly fee
  *   partial — the student pays `monthly` Rs a month (capped at the month's fee)
  *   free    — every month waived (never locks the account)
- * Refused if a month already has more paid than the new plan charges, so no
- * payment is ever left "over" a month.
+ * Refused only if more has been paid than the whole new plan charges.
  */
 export async function setFeePlan(enrollmentId: number, formData: FormData): Promise<{ error?: string }> {
   await assertAdmin();
@@ -241,12 +312,11 @@ export async function setFeePlan(enrollmentId: number, formData: FormData): Prom
   // What each month will charge under the new plan.
   const netFor = (amount: number) => (plan === "free" ? 0 : plan === "partial" ? Math.min(monthly, amount) : amount);
 
-  const over = invoices.filter((i) => i.paid > netFor(i.amount));
-  if (over.length > 0) {
+  const paidAll = invoices.reduce((s, i) => s + i.paid, 0);
+  const newTotal = invoices.reduce((s, i) => s + netFor(i.amount), 0);
+  if (paidAll > newTotal) {
     return {
-      error:
-        over.map((i) => `Month ${i.month_no} already has ${rsText(i.paid)} paid`).join(", ") +
-        ` — more than the new plan charges. Delete that receipt first, or pick a higher amount.`,
+      error: `${rsText(paidAll)} has already been paid — more than the whole new plan (${rsText(newTotal)}). Undo a receipt first, or pick a higher amount.`,
     };
   }
 
@@ -265,6 +335,7 @@ export async function setFeePlan(enrollmentId: number, formData: FormData): Prom
         END
     WHERE enrollment_id = ${enrollmentId}
   `;
+  await rebalancePayments(enrollmentId);
 
   if (formData.get("notify_email") === "on") {
     const total = invoices.reduce((s, i) => s + netFor(i.amount), 0);

@@ -11,6 +11,7 @@ import {
   sendFeeReminders,
   setFeePlan,
   updateInvoice,
+  updatePaymentRow,
   type FeeBoard,
   type FeePlan,
   type FeeBoardRow,
@@ -211,18 +212,21 @@ export default function FeesTab({
                     {r.remaining ? rs(r.remaining) : "—"}
                   </td>
                   <td className="py-2 px-2 text-right">
-                    {r.remaining > 0 ? (
-                      <button
-                        onClick={() => setPaying(r)}
-                        className="text-xs rounded-lg bg-emerald-600 text-white px-2 py-1"
-                      >
-                        Record payment
-                      </button>
-                    ) : (
-                      <button onClick={() => setViewingReceipts(r)} className={btn.small}>
-                        Receipts
-                      </button>
-                    )}
+                    <span className="inline-flex flex-col items-end gap-1">
+                      {r.remaining > 0 && (
+                        <button
+                          onClick={() => setPaying(r)}
+                          className="text-xs rounded-lg bg-emerald-600 text-white px-2 py-1 whitespace-nowrap"
+                        >
+                          Record payment
+                        </button>
+                      )}
+                      {r.paid > 0 && (
+                        <button onClick={() => setViewingReceipts(r)} className={`${btn.small} whitespace-nowrap`}>
+                          Receipts
+                        </button>
+                      )}
+                    </span>
                   </td>
                 </tr>
               ))}
@@ -232,7 +236,7 @@ export default function FeesTab({
         </div>
         <p className="text-xs text-slate-400 mt-2">
           Tap a student&apos;s plan to make them full fee, partial (reduced) or free. Tap a month to change its due
-          date, amount or discount — or to undo a payment recorded by mistake.
+          date, amount or discount. Open <b>Receipts</b> to move a payment to another month, fix its amount, or undo it.
         </p>
       </Card>
 
@@ -264,6 +268,7 @@ export default function FeesTab({
         <InvoiceModal
           name={editingInvoice.row.name}
           invoice={editingInvoice.invoice}
+          invoices={editingInvoice.row.invoices}
           payments={board.paymentRows.filter((p) => p.invoice_id === editingInvoice.invoice.id)}
           onClose={() => setEditingInvoice(null)}
         />
@@ -377,8 +382,8 @@ function FeePlanModal({
           <b className="tabular-nums">{rs(Math.max(0, total - row.paid))}</b>
         </p>
         <p className="text-xs text-slate-400">
-          Payments and receipts are kept exactly as they are; only what each month charges changes. To change just one
-          month, tap that month in the grid instead.
+          Receipts are kept. If a month already has more paid than the new amount, the extra moves to the next unpaid
+          month automatically. To change just one month, tap that month in the grid instead.
         </p>
 
         <label className="flex items-center gap-2 text-sm text-slate-600">
@@ -528,11 +533,13 @@ function RecordPaymentModal({ row, onClose }: { row: FeeBoardRow; onClose: () =>
 function InvoiceModal({
   name,
   invoice,
+  invoices,
   payments,
   onClose,
 }: {
   name: string;
   invoice: InvoiceView;
+  invoices: InvoiceView[];
   payments: FeePaymentRow[];
   onClose: () => void;
 }) {
@@ -549,11 +556,11 @@ function InvoiceModal({
         <div className="rounded-xl border border-slate-200 p-3 mb-4">
           <h3 className="font-semibold text-sm mb-1">Payments for this month</h3>
           <p className="text-xs text-slate-400 mb-2">
-            Recorded by mistake? Undo it — the month goes back to unpaid.
+            Wrong month or amount? Edit it. Recorded by mistake? Undo it.
           </p>
           <ul className="divide-y text-sm">
             {payments.map((p) => (
-              <PaymentRowItem key={p.id} p={p} studentName={name} />
+              <PaymentRowItem key={p.id} p={p} studentName={name} invoices={invoices} />
             ))}
           </ul>
         </div>
@@ -584,9 +591,21 @@ function InvoiceModal({
   );
 }
 
-function PaymentRowItem({ p, studentName }: { p: FeePaymentRow; studentName: string }) {
+function PaymentRowItem({
+  p,
+  studentName,
+  invoices,
+}: {
+  p: FeePaymentRow;
+  studentName: string;
+  invoices: InvoiceView[];
+}) {
   const rs = useRs();
+  const amountType = useAmountInputType();
   const del = useAction();
+  const save = useAction();
+  const [editing, setEditing] = useState(false);
+  const paidOn = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Karachi" }).format(new Date(p.paid_at));
   return (
     <li className="py-2">
       <div className="flex items-center justify-between gap-2">
@@ -597,20 +616,73 @@ function PaymentRowItem({ p, studentName }: { p: FeePaymentRow; studentName: str
           <p className="text-xs text-slate-500">
             <span className="font-mono">{p.receipt_no}</span> · {p.method}
             {p.reference ? ` · ${p.reference}` : ""} · {fmt(p.paid_at)}
+            {p.note ? ` · ${p.note}` : ""}
           </p>
         </div>
-        <button
-          onClick={() => {
-            if (!confirm(`Undo ${rs(p.amount)} for Month ${p.month_no} (${studentName})? The month goes back to unpaid.`))
-              return;
-            del.run(() => deletePaymentRow(p.id));
-          }}
-          disabled={del.pending}
-          className={btn.smallDanger}
-        >
-          Undo
-        </button>
+        <span className="flex gap-1 shrink-0">
+          <button onClick={() => setEditing((v) => !v)} className={btn.small}>
+            {editing ? "Close" : "Edit"}
+          </button>
+          <button
+            onClick={() => {
+              if (!confirm(`Undo ${rs(p.amount)} for Month ${p.month_no} (${studentName})? The month goes back to unpaid.`))
+                return;
+              del.run(() => deletePaymentRow(p.id));
+            }}
+            disabled={del.pending}
+            className={btn.smallDanger}
+          >
+            Undo
+          </button>
+        </span>
       </div>
+      {editing && (
+        <form
+          action={(fd) => save.run(() => updatePaymentRow(p.id, fd), { onDone: () => setEditing(false) })}
+          className="mt-2 space-y-2 rounded-xl bg-slate-50 p-3"
+        >
+          <div className="grid grid-cols-2 gap-2">
+            <label>
+              <span className="block text-xs font-medium text-slate-500 mb-1">Pays for</span>
+              <select name="month_no" defaultValue={p.month_no} className={fieldClass()}>
+                {invoices.map((i) => {
+                  const room = i.remaining + (i.id === p.invoice_id ? p.amount : 0);
+                  return (
+                    <option key={i.id} value={i.month_no}>
+                      Month {i.month_no} — {room > 0 ? `${rs(room)} room` : "full"}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+            <label>
+              <span className="block text-xs font-medium text-slate-500 mb-1">Amount (Rs)</span>
+              <input name="amount" type={amountType} min={1} defaultValue={p.amount} className={fieldClass()} />
+            </label>
+            <label>
+              <span className="block text-xs font-medium text-slate-500 mb-1">Paid on</span>
+              <input name="paid_on" type="date" defaultValue={paidOn} className={fieldClass()} />
+            </label>
+            <label>
+              <span className="block text-xs font-medium text-slate-500 mb-1">Method</span>
+              <select name="method" defaultValue={p.method} className={fieldClass()}>
+                {Array.from(new Set(["EasyPaisa", "JazzCash", "Bank", "Cash", p.method])).map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <input name="reference" defaultValue={p.reference ?? ""} placeholder="Transaction ID (optional)" className={fieldClass()} />
+          <input name="note" defaultValue={p.note ?? ""} placeholder="Note (optional)" className={fieldClass()} />
+          <p className="text-xs text-slate-400">
+            Method, transaction ID, date and note apply to the whole receipt {p.receipt_no}.
+          </p>
+          <button type="submit" disabled={save.pending} className={`w-full ${btn.primary}`}>
+            Save changes
+          </button>
+          <Msg error={save.error} />
+        </form>
+      )}
       <Msg error={del.error} />
     </li>
   );
@@ -629,14 +701,14 @@ function ReceiptsModal({
   return (
     <Modal title={`${row.name} — payments`} onClose={onClose}>
       <p className="text-sm text-slate-600 mb-3">
-        {rs(row.paid)} paid of {rs(row.total)}. Undo anything recorded by mistake.
+        {rs(row.paid)} paid of {rs(row.total)}. Edit a payment to move it to another month or fix its amount.
       </p>
       {payments.length === 0 ? (
         <p className="text-slate-400 text-sm">Nothing recorded yet.</p>
       ) : (
         <ul className="divide-y text-sm">
           {payments.map((p) => (
-            <PaymentRowItem key={p.id} p={p} studentName={row.name} />
+            <PaymentRowItem key={p.id} p={p} studentName={row.name} invoices={row.invoices} />
           ))}
         </ul>
       )}
