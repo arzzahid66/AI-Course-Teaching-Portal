@@ -233,6 +233,31 @@ export async function updatePaymentRow(id: number, formData: FormData): Promise<
   return {};
 }
 
+/**
+ * Give a student more time on one month ("I'll pay next month"): the portal
+ * stays unlocked until `until`, while the amount keeps showing as remaining.
+ * An empty date removes the extension (back to the normal grace period).
+ */
+export async function setUnlockUntil(invoiceId: number, formData: FormData): Promise<{ error?: string }> {
+  await assertAdmin();
+  const until = String(formData.get("until") ?? "").trim();
+  if (until && !/^\d{4}-\d{2}-\d{2}$/.test(until)) return { error: "Pick a date." };
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Karachi" }).format(new Date());
+  if (until && until < today) return { error: "Pick today or a later date." };
+  const note = String(formData.get("note") ?? "").trim();
+  const res = (await sql`
+    UPDATE fee_invoices
+    SET unlock_until = ${until || null},
+        note = CASE WHEN ${note} = '' THEN note ELSE ${note} END
+    WHERE id = ${invoiceId}
+    RETURNING id
+  `) as { id: number }[];
+  if (!res[0]) return { error: "Fee month not found." };
+  revalidatePath("/admin");
+  revalidatePath("/portal");
+  return {};
+}
+
 /** Edit one fee month: due date, amount, discount / waiver and note. */
 export async function updateInvoice(id: number, formData: FormData): Promise<{ error?: string }> {
   await assertAdmin();

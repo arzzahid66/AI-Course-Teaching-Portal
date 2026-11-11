@@ -10,6 +10,7 @@ import {
   saveTutorWhatsapp,
   sendFeeReminders,
   setFeePlan,
+  setUnlockUntil,
   updateInvoice,
   updatePaymentRow,
   type FeeBoard,
@@ -194,13 +195,18 @@ export default function FeesTab({
                             title={
                               i.paid > 0
                                 ? `Due ${fmtDay(i.due_date)} · part paid, so never blocked`
-                                : `Due ${fmtDay(i.due_date)} · blocked after ${fmtDay(i.grace_until)} if nothing is paid`
+                                : i.extended
+                                  ? `Due ${fmtDay(i.due_date)} · extra time given: portal open till ${fmtDay(i.grace_until)}`
+                                  : `Due ${fmtDay(i.due_date)} · blocked after ${fmtDay(i.grace_until)} if nothing is paid`
                             }
                           >
                             <FeeBadge status={i.status} />
                             <span className="block text-[11px] text-slate-400 tabular-nums">
                               {i.remaining > 0 ? `${rs(i.remaining)} left` : `${rs(i.paid)} · undo`}
                             </span>
+                            {i.extended && i.remaining > 0 && (
+                              <span className="block text-[11px] text-amber-700">open till {fmtDay(i.grace_until)}</span>
+                            )}
                           </button>
                         ) : (
                           <span className="text-slate-300">—</span>
@@ -440,10 +446,32 @@ function RecordPaymentModal({ row, onClose }: { row: FeeBoardRow; onClose: () =>
     target === "auto" ? row.remaining : row.invoices.find((i) => String(i.month_no) === target)?.remaining ?? 0;
   const [amount, setAmount] = useState<string>(String(suggested));
   const [receipt, setReceipt] = useState<string | null>(null);
+  const [mode, setMode] = useState<"pay" | "time">("pay");
 
   return (
-    <Modal title={`Record payment — ${row.name}`} onClose={onClose}>
-      {receipt ? (
+    <Modal title={`${mode === "pay" ? "Record payment" : "Give more time"} — ${row.name}`} onClose={onClose}>
+      {!receipt && (
+        <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 mb-3 text-sm">
+          {(
+            [
+              ["pay", "Paid now"],
+              ["time", "Will pay later"],
+            ] as const
+          ).map(([m, label]) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={`rounded-lg py-1.5 font-medium ${mode === m ? "bg-white shadow-sm text-slate-900" : "text-slate-500"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {mode === "time" && !receipt ? (
+        <GiveTimeForm invoices={unpaid} onDone={onClose} />
+      ) : receipt ? (
         <div className="text-center py-4">
           <p className="text-emerald-700 font-semibold">Payment recorded</p>
           <p className="font-mono text-lg mt-1">{receipt}</p>
@@ -530,6 +558,77 @@ function RecordPaymentModal({ row, onClose }: { row: FeeBoardRow; onClose: () =>
   );
 }
 
+/**
+ * "I'll pay next month": keep the portal unlocked until a chosen date. The
+ * amount keeps showing as remaining; if nothing is paid by then, it locks again.
+ */
+function GiveTimeForm({ invoices, onDone }: { invoices: InvoiceView[]; onDone: () => void }) {
+  const rs = useRs();
+  const save = useAction();
+  const clear = useAction();
+  // Start on the month that is locking them (or the oldest with nothing paid).
+  const first =
+    invoices.find((i) => i.blocks) ?? invoices.find((i) => i.paid === 0) ?? invoices[0];
+  const [invoiceId, setInvoiceId] = useState<number | undefined>(first?.id);
+  const inv = invoices.find((i) => i.id === invoiceId);
+  if (!inv) return <p className="text-sm text-slate-400">Nothing left to pay.</p>;
+
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Karachi" }).format(new Date());
+  // Default: a month from today (or the date already given).
+  const in30 = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Karachi" }).format(
+    new Date(Date.now() + 30 * 86_400_000)
+  );
+  const suggested = inv.extended && inv.grace_until >= today ? inv.grace_until : in30;
+
+  return (
+    <form
+      key={inv.id}
+      action={(fd) => save.run(() => setUnlockUntil(inv.id, fd), { onDone })}
+      className="space-y-2"
+    >
+      {invoices.length > 1 && (
+        <label className="block">
+          <span className="block text-xs font-medium text-slate-500 mb-1">Which month?</span>
+          <select value={inv.id} onChange={(e) => setInvoiceId(Number(e.target.value))} className={fieldClass()}>
+            {invoices.map((i) => (
+              <option key={i.id} value={i.id}>
+                Month {i.month_no} — {rs(i.remaining)} left{i.extended ? ` · open till ${fmtDay(i.grace_until)}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <label className="block">
+        <span className="block text-xs font-medium text-slate-500 mb-1">Keep portal open until</span>
+        <input name="until" type="date" min={today} defaultValue={suggested} className={fieldClass()} />
+      </label>
+      <input name="note" placeholder="Note (optional), e.g. will pay with next month" className={fieldClass()} />
+      <p className="text-xs text-slate-500 rounded-xl bg-amber-50 px-3 py-2">
+        Month {inv.month_no} still shows <b className="tabular-nums">{rs(inv.remaining)}</b> left — for you and for the
+        student. The portal stays unlocked until this date; if nothing is paid by then, it locks again.
+      </p>
+      <button type="submit" disabled={save.pending} className={`w-full ${btn.primary}`}>
+        Unlock portal till this date
+      </button>
+      {inv.extended && (
+        <button
+          type="button"
+          onClick={() => {
+            const fd = new FormData();
+            fd.set("until", "");
+            clear.run(() => setUnlockUntil(inv.id, fd), { onDone });
+          }}
+          disabled={clear.pending}
+          className={`w-full ${btn.small}`}
+        >
+          Remove extra time (normal grace period)
+        </button>
+      )}
+      <Msg error={save.error || clear.error} />
+    </form>
+  );
+}
+
 function InvoiceModal({
   name,
   invoice,
@@ -551,6 +650,20 @@ function InvoiceModal({
       <p className="text-sm text-slate-600 mb-3">
         Paid {rs(invoice.paid)} of {rs(invoice.amount - invoice.discount)} · <FeeBadge status={invoice.status} />
       </p>
+
+      {invoice.remaining > 0 && (
+        <details className="rounded-xl border border-slate-200 p-3 mb-4" open={invoice.extended}>
+          <summary className="font-semibold text-sm cursor-pointer">
+            Will pay later? Keep the portal open
+            {invoice.extended && (
+              <span className="font-normal text-amber-700"> · open till {fmtDay(invoice.grace_until)}</span>
+            )}
+          </summary>
+          <div className="mt-2">
+            <GiveTimeForm invoices={[invoice]} onDone={onClose} />
+          </div>
+        </details>
+      )}
 
       {payments.length > 0 && (
         <div className="rounded-xl border border-slate-200 p-3 mb-4">

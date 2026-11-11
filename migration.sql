@@ -126,6 +126,7 @@ CREATE TABLE fee_invoices (
   amount        int  NOT NULL,
   discount      int  NOT NULL DEFAULT 0,
   note          text,
+  unlock_until  date,                              -- tutor gave extra time: no lock until this day
   UNIQUE (enrollment_id, month_no)
 );
 
@@ -208,6 +209,7 @@ CREATE TABLE homework_submissions (
   weekend_id    int  NOT NULL REFERENCES weekends(id) ON DELETE CASCADE,
   link_url      text NOT NULL,
   note          text,
+  unlock_until  date,                              -- tutor gave extra time: no lock until this day
   status        text NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted', 'needs_changes', 'approved')),
   marks         int  CHECK (marks BETWEEN 0 AND 10),
   feedback      text,

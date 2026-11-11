@@ -76,6 +76,8 @@ export type InvoiceView = {
   month_no: number;
   due_date: string; // YYYY-MM-DD
   grace_until: string; // YYYY-MM-DD — last day before the account is locked
+  /** The tutor gave extra time: the account stays open until grace_until even with nothing paid. */
+  extended: boolean;
   amount: number;
   discount: number;
   paid: number;
@@ -106,6 +108,7 @@ type InvoiceSqlRow = {
   month_no: number;
   due_date: string;
   grace_until: string;
+  extended: boolean;
   amount: number;
   discount: number;
   paid: string;
@@ -134,6 +137,7 @@ function toInvoiceView(r: InvoiceSqlRow): InvoiceView {
     month_no: Number(r.month_no),
     due_date: r.due_date,
     grace_until: r.grace_until,
+    extended: Boolean(r.extended),
     amount: Number(r.amount),
     discount: Number(r.discount),
     paid,
@@ -157,12 +161,12 @@ export async function loadInvoices(opts: {
   const rows = (await sql`
     SELECT i.id, i.enrollment_id, e.student_id, i.month_no,
       to_char(i.due_date, 'YYYY-MM-DD') AS due_date,
-      to_char(GREATEST(i.due_date, (e.joined_at AT TIME ZONE 'Asia/Karachi')::date) + b.grace_days, 'YYYY-MM-DD') AS grace_until,
-      i.amount, i.discount, i.note,
+      to_char(COALESCE(i.unlock_until, GREATEST(i.due_date, (e.joined_at AT TIME ZONE 'Asia/Karachi')::date) + b.grace_days), 'YYYY-MM-DD') AS grace_until,
+      i.amount, i.discount, i.note, (i.unlock_until IS NOT NULL) AS extended,
       COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id), 0) AS paid,
       (i.due_date <= (now() AT TIME ZONE 'Asia/Karachi')::date) AS past_due,
       (i.due_date - (now() AT TIME ZONE 'Asia/Karachi')::date) AS days_to_due,
-      ((GREATEST(i.due_date, (e.joined_at AT TIME ZONE 'Asia/Karachi')::date) + b.grace_days)
+      ((COALESCE(i.unlock_until, GREATEST(i.due_date, (e.joined_at AT TIME ZONE 'Asia/Karachi')::date) + b.grace_days))
         < (now() AT TIME ZONE 'Asia/Karachi')::date) AS past_grace
     FROM fee_invoices i
     JOIN enrollments e ON e.id = i.enrollment_id
@@ -184,8 +188,8 @@ export async function getBlockingInvoice(studentId: number): Promise<InvoiceView
   const rows = (await sql`
     SELECT i.id, i.enrollment_id, e.student_id, i.month_no,
       to_char(i.due_date, 'YYYY-MM-DD') AS due_date,
-      to_char(GREATEST(i.due_date, (e.joined_at AT TIME ZONE 'Asia/Karachi')::date) + b.grace_days, 'YYYY-MM-DD') AS grace_until,
-      i.amount, i.discount, i.note,
+      to_char(COALESCE(i.unlock_until, GREATEST(i.due_date, (e.joined_at AT TIME ZONE 'Asia/Karachi')::date) + b.grace_days), 'YYYY-MM-DD') AS grace_until,
+      i.amount, i.discount, i.note, (i.unlock_until IS NOT NULL) AS extended,
       COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id), 0) AS paid,
       true AS past_due,
       true AS past_grace,
@@ -194,7 +198,7 @@ export async function getBlockingInvoice(studentId: number): Promise<InvoiceView
     JOIN enrollments e ON e.id = i.enrollment_id
     JOIN batches b ON b.id = e.batch_id
     WHERE e.student_id = ${studentId} AND e.status = 'active'
-      AND (GREATEST(i.due_date, (e.joined_at AT TIME ZONE 'Asia/Karachi')::date) + b.grace_days)
+      AND (COALESCE(i.unlock_until, GREATEST(i.due_date, (e.joined_at AT TIME ZONE 'Asia/Karachi')::date) + b.grace_days))
         < (now() AT TIME ZONE 'Asia/Karachi')::date
     ORDER BY i.due_date ASC
   `) as InvoiceSqlRow[];
@@ -209,7 +213,7 @@ export async function loadFeeLockedStudentIds(): Promise<Set<number>> {
     JOIN enrollments e ON e.id = i.enrollment_id
     JOIN batches b ON b.id = e.batch_id
     WHERE e.status = 'active'
-      AND (GREATEST(i.due_date, (e.joined_at AT TIME ZONE 'Asia/Karachi')::date) + b.grace_days)
+      AND (COALESCE(i.unlock_until, GREATEST(i.due_date, (e.joined_at AT TIME ZONE 'Asia/Karachi')::date) + b.grace_days))
         < (now() AT TIME ZONE 'Asia/Karachi')::date
       AND GREATEST(0, i.amount - i.discount) > 0
       AND COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id), 0) = 0
